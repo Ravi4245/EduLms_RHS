@@ -1,0 +1,6 @@
+@EduLms_RHS_HostAddress = http://localhost:5205
+
+GET {{EduLms_RHS_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

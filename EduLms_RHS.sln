@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.13.35828.75 d17.13
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EduLms_RHS", "EduLms_RHS.csproj", "{E7DA4424-29AD-4EC8-8DC2-877E81BAE7BA}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{E7DA4424-29AD-4EC8-8DC2-877E81BAE7BA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E7DA4424-29AD-4EC8-8DC2-877E81BAE7BA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E7DA4424-29AD-4EC8-8DC2-877E81BAE7BA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E7DA4424-29AD-4EC8-8DC2-877E81BAE7BA}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {39E2C307-488E-4DCA-9CBE-BF151161E8FC}
+	EndGlobalSection
+EndGlobal
