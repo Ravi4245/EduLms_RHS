@@ -1,10 +1,7 @@
 ﻿using EduLms_RHS.Dto;
 using EduLms_RHS.Models;
-using EduLms_RHS.Models;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
-using Microsoft.Extensions.Configuration;
 using System.Data;
 
 namespace Edu_LMS_Greysoft.Controllers
@@ -14,40 +11,88 @@ namespace Edu_LMS_Greysoft.Controllers
     public class TeacherController : ControllerBase
     {
         private readonly IConfiguration _configuration;
+        private readonly EmailService _emailService;
         private readonly string _connectionString;
 
-        public TeacherController(IConfiguration configuration)
+        public TeacherController(IConfiguration configuration, EmailService emailService)
         {
             _configuration = configuration;
+            _emailService = emailService;
             _connectionString = _configuration.GetConnectionString("Lms");
         }
 
         [HttpPost("RegisterTeacher")]
-        public IActionResult RegisterTeacher(RegisterTeacherDto teacher)
+        public async Task<IActionResult> RegisterTeacher(RegisterTeacherDto teacher)
         {
-            using SqlConnection con = new(_connectionString);
-            con.Open();
+            try
+            {
+                using SqlConnection con = new(_connectionString);
+                con.Open();
 
-            SqlCommand cmd = new("INSERT INTO Teacher (FullName, Email, Password, PhoneNumber, Qualification, ExperienceYears, Specialization, TeacherNo, CreatedAt) " +
-                                 "VALUES (@FullName, @Email, @Password, @PhoneNumber, @Qualification, @ExperienceYears, @Specialization, @TeacherNo, GETDATE())", con);
+                SqlCommand cmd = new(@"
+                    INSERT INTO Teacher (
+                        FullName, Email, Password, PhoneNumber, Qualification,
+                        ExperienceYears, Specialization, TeacherNo, CreatedAt
+                    )
+                    VALUES (
+                        @FullName, @Email, @Password, @PhoneNumber, @Qualification,
+                        @ExperienceYears, @Specialization, @TeacherNo, GETDATE()
+                    )", con);
 
-            cmd.Parameters.AddWithValue("@FullName", teacher.FullName);
-            cmd.Parameters.AddWithValue("@Email", teacher.Email);
-            cmd.Parameters.AddWithValue("@Password", teacher.Password);
-            cmd.Parameters.AddWithValue("@PhoneNumber", teacher.PhoneNumber);
-            cmd.Parameters.AddWithValue("@Qualification", teacher.Qualification);
-            cmd.Parameters.AddWithValue("@ExperienceYears", teacher.ExperienceYears);
-            cmd.Parameters.AddWithValue("@Specialization", teacher.Specialization);
-            cmd.Parameters.AddWithValue("@TeacherNo", teacher.TeacherNo);
+                cmd.Parameters.AddWithValue("@FullName", teacher.FullName);
+                cmd.Parameters.AddWithValue("@Email", teacher.Email);
+                cmd.Parameters.AddWithValue("@Password", teacher.Password); // ⚠️ Use hashing!
+                cmd.Parameters.AddWithValue("@PhoneNumber", teacher.PhoneNumber);
+                cmd.Parameters.AddWithValue("@Qualification", teacher.Qualification);
+                cmd.Parameters.AddWithValue("@ExperienceYears", teacher.ExperienceYears);
+                cmd.Parameters.AddWithValue("@Specialization", teacher.Specialization);
+                cmd.Parameters.AddWithValue("@TeacherNo", teacher.TeacherNo);
 
-            int rows = cmd.ExecuteNonQuery();
-            return rows > 0
-                ? Ok(new { message = "✅ Teacher registration successful. Waiting for admin approval." })
-                : BadRequest(new { message = "Registration failed." });
+                int rows = cmd.ExecuteNonQuery();
+
+                string subject = "🎉 Registration Received – Awaiting Approval";
+
+                string body = $@"
+                    <p style='font-family:Segoe UI, sans-serif; font-size:14px;'>
+                        Dear <strong>{teacher.FullName}</strong>, 👋
+                    </p>
+                    <p>
+                        We're excited to welcome you to our <strong>Learning Management System (LMS)</strong> community. 📚<br/>
+                        Thank you for registering as a teacher – we truly value your expertise and commitment to education. 🙌
+                    </p>
+                    <p>
+                        Your account has been successfully created and is currently <strong>awaiting admin approval</strong>. 🔐<br/>
+                        You’ll be able to access your dashboard shortly.
+                    </p>
+                    <p>
+                        If you have any questions, feel free to reach out anytime.
+                    </p>
+                    <br/>
+                    <p>
+                        Best regards,<br/> 
+                        <strong>RHS Team</strong> 🎓
+                    </p>";
+
+                await _emailService.SendEmailAsync(teacher.Email, subject, body);
+
+                return Ok(new { message = "✅ Teacher registered successfully. Awaiting admin approval." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new
+                {
+                    message = "❌ Error occurred during teacher registration.",
+                    error = ex.Message,
+                    stackTrace = ex.StackTrace
+                });
+            }
         }
+    
 
 
-        [HttpPost("CreateCourse")]
+
+
+[HttpPost("CreateCourse")]
         public IActionResult CreateCourse(Course course)
         {
             using SqlConnection con = new(_connectionString);

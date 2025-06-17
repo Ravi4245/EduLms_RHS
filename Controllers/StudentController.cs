@@ -1,8 +1,9 @@
 ﻿using EduLms_RHS.Dto;
 using EduLms_RHS.Models;
-using Microsoft.AspNetCore.Authorization; // ✅ Add this
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
+using Microsoft.AspNetCore.Authorization;
+using System.Data;
 
 [Route("api/[controller]")]
 [ApiController]
@@ -10,38 +11,61 @@ public class StudentController : ControllerBase
 {
     private readonly IConfiguration _configuration;
     private readonly string _connectionString;
+    private readonly EmailService _emailService;
 
-    public StudentController(IConfiguration configuration)
+    public StudentController(IConfiguration configuration, EmailService emailService)
     {
         _configuration = configuration;
         _connectionString = _configuration.GetConnectionString("Lms");
+        _emailService = emailService;
     }
 
-    // ❌ No authorization needed to register
     [HttpPost("RegisterStudent")]
-    public IActionResult RegisterStudent(RegisterStudentDto student)
+    public async Task<IActionResult> RegisterStudent(RegisterStudentDto student)
     {
-        using SqlConnection con = new(_connectionString);
-        con.Open();
+        try
+        {
+            using SqlConnection con = new(_connectionString);
+            con.Open();
 
-        SqlCommand cmd = new("INSERT INTO Student (FullName, Email, Password, PhoneNumber, DateOfBirth, Gender, Address, GradeLevel, StudentNo, CreatedAt) " +
-                             "VALUES (@FullName, @Email, @Password, @PhoneNumber, @DateOfBirth, @Gender, @Address, @GradeLevel, @StudentNo, GETDATE())", con);
+            SqlCommand cmd = new("INSERT INTO Student (FullName, Email, Password, PhoneNumber, DateOfBirth, Gender, Address, GradeLevel, StudentNo, CreatedAt) " +
+                                 "VALUES (@FullName, @Email, @Password, @PhoneNumber, @DateOfBirth, @Gender, @Address, @GradeLevel, @StudentNo, GETDATE())", con);
 
-        cmd.Parameters.AddWithValue("@FullName", student.FullName);
-        cmd.Parameters.AddWithValue("@Email", student.Email);
-        cmd.Parameters.AddWithValue("@Password", student.Password);
-        cmd.Parameters.AddWithValue("@PhoneNumber", student.PhoneNumber);
-        cmd.Parameters.AddWithValue("@DateOfBirth", student.DateOfBirth);
-        cmd.Parameters.AddWithValue("@Gender", student.Gender);
-        cmd.Parameters.AddWithValue("@Address", student.Address);
-        cmd.Parameters.AddWithValue("@GradeLevel", student.GradeLevel);
-        cmd.Parameters.AddWithValue("@StudentNo", student.StudentNo);
+            cmd.Parameters.AddWithValue("@FullName", student.FullName);
+            cmd.Parameters.AddWithValue("@Email", student.Email);
+            cmd.Parameters.AddWithValue("@Password", student.Password); // ⚠️ Hash this!
+            cmd.Parameters.AddWithValue("@PhoneNumber", student.PhoneNumber);
+            cmd.Parameters.AddWithValue("@DateOfBirth", student.DateOfBirth);
+            cmd.Parameters.AddWithValue("@Gender", student.Gender);
+            cmd.Parameters.AddWithValue("@Address", student.Address);
+            cmd.Parameters.AddWithValue("@GradeLevel", student.GradeLevel);
+            cmd.Parameters.AddWithValue("@StudentNo", student.StudentNo);
 
-        int rows = cmd.ExecuteNonQuery();
-        return rows > 0 ? Ok(new { message = "✅ Student registration successful. Waiting for admin approval." }) : BadRequest("Registration failed.");
+            cmd.ExecuteNonQuery();
+
+            string subject = "✅ Registration Successful – Awaiting Approval";
+            string body = $@"
+                <p style='font-family:Segoe UI, sans-serif; font-size:14px;'>
+                    Dear <strong>{student.FullName}</strong>, 👋
+                </p>
+                <p>
+                    Thank you for registering with our <strong>Learning Management System (LMS)</strong>.<br/>
+                    Your account has been created and is <strong>awaiting admin approval</strong>.
+                </p>
+                <p>
+                    You’ll be able to log in once your registration is approved.
+                </p>
+                <p>Best regards,<br/><strong>RHS Team</strong> 💼</p>";
+
+            await _emailService.SendEmailAsync(student.Email, subject, body);
+
+            return Ok(new { message = "Student registered successfully. Awaiting admin approval." });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { message = "Error occurred", error = ex.Message });
+        }
     }
-
-
 
     [HttpGet("Profile/{studentId}")]
     public IActionResult GetProfile(int studentId)
@@ -70,7 +94,6 @@ public class StudentController : ControllerBase
         return NotFound("Student not found");
     }
 
-
     [HttpGet("EnrolledCourses/{studentId}")]
     public IActionResult GetEnrolledCourses(int studentId)
     {
@@ -97,33 +120,37 @@ public class StudentController : ControllerBase
         return Ok(courses);
     }
 
+    public class EnrollDto
+    {
+        public int StudentId { get; set; }
+        public int CourseId { get; set; }
+    }
 
     [HttpPost("Enroll")]
-    public IActionResult EnrollCourse(int studentId, int courseId)
+    public IActionResult EnrollCourse([FromBody] EnrollDto data)
     {
         using SqlConnection con = new(_connectionString);
         SqlCommand cmd = new("INSERT INTO StudentCourse (StudentId, CourseId) VALUES (@sid, @cid)", con);
-        cmd.Parameters.AddWithValue("@sid", studentId);
-        cmd.Parameters.AddWithValue("@cid", courseId);
+        cmd.Parameters.AddWithValue("@sid", data.StudentId);
+        cmd.Parameters.AddWithValue("@cid", data.CourseId);
         con.Open();
         cmd.ExecuteNonQuery();
         return Ok(new { message = "Enrolled successfully." });
     }
-
 
     [HttpGet("MyAssignments/{studentId}")]
     public IActionResult GetMyAssignments(int studentId)
     {
         using SqlConnection con = new(_connectionString);
         SqlCommand cmd = new(@"
-        SELECT a.AssignmentId, a.Title, a.Description, a.UploadFilePath, a.DueDate
-        FROM Assignment a
-        INNER JOIN AssignmentStudent sa ON sa.AssignmentId = a.AssignmentId
-        WHERE sa.StudentId = @sid
-        AND NOT EXISTS (
-            SELECT 1 FROM AssignmentSubmission sub
-            WHERE sub.AssignmentId = a.AssignmentId AND sub.StudentId = @sid
-        )", con);
+            SELECT a.AssignmentId, a.Title, a.Description, a.UploadFilePath, a.DueDate
+            FROM Assignment a
+            INNER JOIN AssignmentStudent sa ON sa.AssignmentId = a.AssignmentId
+            WHERE sa.StudentId = @sid
+            AND NOT EXISTS (
+                SELECT 1 FROM AssignmentSubmission sub
+                WHERE sub.AssignmentId = a.AssignmentId AND sub.StudentId = @sid
+            )", con);
 
         cmd.Parameters.AddWithValue("@sid", studentId);
         con.Open();
@@ -145,13 +172,11 @@ public class StudentController : ControllerBase
         return Ok(assignments);
     }
 
-
-
     [HttpPost("SubmitAssignment")]
     public async Task<IActionResult> SubmitAssignment(
-    [FromQuery] int assignmentId,
-    [FromQuery] int studentId,
-    IFormFile file)
+        [FromQuery] int assignmentId,
+        [FromQuery] int studentId,
+        IFormFile file)
     {
         if (file == null || file.Length == 0)
             return BadRequest("❌ No file uploaded");
@@ -174,11 +199,9 @@ public class StudentController : ControllerBase
         using SqlConnection con = new(_connectionString);
         con.Open();
 
-        // ✅ Check if AssignmentId and StudentId exist
         SqlCommand checkCmd = new(@"
-        SELECT COUNT(*) 
-        FROM Assignment a, Student s 
-        WHERE a.AssignmentId = @aid AND s.StudentId = @sid", con);
+            SELECT COUNT(*) FROM Assignment a, Student s 
+            WHERE a.AssignmentId = @aid AND s.StudentId = @sid", con);
         checkCmd.Parameters.AddWithValue("@aid", assignmentId);
         checkCmd.Parameters.AddWithValue("@sid", studentId);
 
@@ -189,8 +212,8 @@ public class StudentController : ControllerBase
         }
 
         SqlCommand cmd = new(@"
-        INSERT INTO AssignmentSubmission (AssignmentId, StudentId, SubmittedFilePath, SubmittedDate)
-        VALUES (@aid, @sid, @file, @submittedDate)", con);
+            INSERT INTO AssignmentSubmission (AssignmentId, StudentId, SubmittedFilePath, SubmittedDate)
+            VALUES (@aid, @sid, @file, @submittedDate)", con);
 
         cmd.Parameters.AddWithValue("@aid", assignmentId);
         cmd.Parameters.AddWithValue("@sid", studentId);
@@ -201,10 +224,6 @@ public class StudentController : ControllerBase
 
         return Ok(new { message = "✅ Assignment uploaded successfully" });
     }
-
-
-
-
 
     [HttpGet("PerformanceReport/{studentId}")]
     public IActionResult GetPerformanceReport(int studentId)
@@ -232,6 +251,3 @@ public class StudentController : ControllerBase
         return Ok(reports);
     }
 }
-
-
-

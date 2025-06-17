@@ -11,6 +11,10 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddDbContext<EduLmsGreysoftContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("Lms")));
 
+builder.Services.Configure<Emailsetting>(builder.Configuration.GetSection("EmailSettings"));
+
+builder.Services.AddTransient<EmailService>();
+
 // 2️⃣ Enable CORS (optional for frontend communication)
 builder.Services.AddCors(options =>
 {
