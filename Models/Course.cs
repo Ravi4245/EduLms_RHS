@@ -17,6 +17,8 @@ public partial class Course
 
     public DateTime? CreatedAt { get; set; }
 
+    public string? PdfFilePath { get; set; }
+
     public virtual ICollection<Assignment> Assignments { get; set; } = new List<Assignment>();
 
     public virtual Teacher? CreatedByTeacher { get; set; }

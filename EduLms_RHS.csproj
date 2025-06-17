@@ -22,4 +22,11 @@
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="Uploads\" />
+    <Folder Include="wwwroot\CoursePdf\" />
+    <Folder Include="wwwroot\StudentSubmissions\" />
+    <Folder Include="wwwroot\PDFs\" />
+  </ItemGroup>
+
 </Project>

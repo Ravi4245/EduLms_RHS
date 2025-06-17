@@ -70,20 +70,22 @@ public class StudentController : ControllerBase
         return NotFound("Student not found");
     }
 
-
     [HttpGet("EnrolledCourses/{studentId}")]
     public IActionResult GetEnrolledCourses(int studentId)
     {
         using SqlConnection con = new(_connectionString);
         SqlCommand cmd = new(@"
-            SELECT c.CourseId, c.CourseName, c.Description, c.Category
-            FROM Course c
-            INNER JOIN StudentCourse sc ON sc.CourseId = c.CourseId
-            WHERE sc.StudentId = @sid", con);
+        SELECT c.CourseId, c.CourseName, c.Description, c.Category, c.PdfFilePath
+        FROM Course c
+        INNER JOIN StudentCourse sc ON sc.CourseId = c.CourseId
+        WHERE sc.StudentId = @sid", con);
+
         cmd.Parameters.AddWithValue("@sid", studentId);
         con.Open();
+
         using SqlDataReader reader = cmd.ExecuteReader();
         List<object> courses = new();
+
         while (reader.Read())
         {
             courses.Add(new
@@ -91,11 +93,44 @@ public class StudentController : ControllerBase
                 CourseId = reader["CourseId"],
                 CourseName = reader["CourseName"],
                 Description = reader["Description"],
-                Category = reader["Category"]
+                Category = reader["Category"],
+                PdfFilePath = reader["PdfFilePath"] != DBNull.Value ? reader["PdfFilePath"].ToString() : null
             });
         }
+
         return Ok(courses);
     }
+
+    [HttpGet("MyCourses/{studentId}")]
+    public IActionResult GetMyCourses(int studentId)
+    {
+        using SqlConnection con = new SqlConnection(_connectionString);
+        SqlCommand cmd = new SqlCommand(@"
+        SELECT c.CourseId, c.CourseName, c.Description, c.Category, c.PdfFilePath
+        FROM Course c
+        INNER JOIN StudentCourse sc ON sc.CourseId = c.CourseId
+        WHERE sc.StudentId = @sid", con);
+
+        cmd.Parameters.AddWithValue("@sid", studentId);
+        con.Open();
+
+        List<object> courses = new();
+        using SqlDataReader reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            courses.Add(new
+            {
+                CourseId = reader["CourseId"],
+                CourseName = reader["CourseName"],
+                Description = reader["Description"],
+                Category = reader["Category"],
+                PdfFilePath = reader["PdfFilePath"] != DBNull.Value ? reader["PdfFilePath"].ToString() : null
+            });
+        }
+
+        return Ok(courses);
+    }
+
 
 
     [HttpPost("Enroll")]
@@ -232,6 +267,3 @@ public class StudentController : ControllerBase
         return Ok(reports);
     }
 }
-
-
-

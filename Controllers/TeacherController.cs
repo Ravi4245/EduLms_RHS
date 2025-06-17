@@ -1,6 +1,6 @@
 ﻿using EduLms_RHS.Dto;
 using EduLms_RHS.Models;
-using EduLms_RHS.Models;
+
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
@@ -47,19 +47,74 @@ namespace Edu_LMS_Greysoft.Controllers
         }
 
 
-        [HttpPost("CreateCourse")]
-        public IActionResult CreateCourse(Course course)
+        [HttpGet("Profile/{teacherId}")]
+        public IActionResult GetTeacherProfile(int teacherId)
         {
+            using SqlConnection con = new(_configuration.GetConnectionString("Lms"));
+            SqlCommand cmd = new(@"SELECT FullName, Email, ExperienceYears, Specialization, PhoneNumber 
+                           FROM Teacher 
+                           WHERE TeacherId = @tid", con);
+            cmd.Parameters.AddWithValue("@tid", teacherId);
+            con.Open();
+            using SqlDataReader reader = cmd.ExecuteReader();
+            if (reader.Read())
+            {
+                var profile = new
+                {
+                    FullName = reader["FullName"].ToString(),
+                    Email = reader["Email"].ToString(),
+                    Experience = Convert.ToInt32(reader["ExperienceYears"]),
+                    Specialization = reader["Specialization"].ToString(),
+                    Phone = reader["PhoneNumber"].ToString()
+                };
+                return Ok(profile);
+            }
+            return NotFound(new { message = "Teacher profile not found" });
+        }
+
+
+
+
+        [HttpPost("CreateCourse")]
+        public async Task<IActionResult> CreateCourse([FromForm] CourseFormDto dto)
+        {
+            string? filePath = null;
+
+            if (dto.PdfFile != null && dto.PdfFile.Length > 0)
+            {
+                var uploadsFolder = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "CoursePdfs");
+                if (!Directory.Exists(uploadsFolder))
+                {
+                    Directory.CreateDirectory(uploadsFolder);
+                }
+
+                var uniqueFileName = $"{Guid.NewGuid()}_{dto.PdfFile.FileName}";
+                var fullPath = Path.Combine(uploadsFolder, uniqueFileName);
+
+                using (var stream = new FileStream(fullPath, FileMode.Create))
+                {
+                    await dto.PdfFile.CopyToAsync(stream);
+                }
+
+                filePath = $"/CoursePdfs/{uniqueFileName}";
+            }
+
             using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new("INSERT INTO Course (CourseName, Description, Category, CreatedByTeacherId) VALUES (@name, @desc, @cat, @tid)", con);
-            cmd.Parameters.AddWithValue("@name", course.CourseName);
-            cmd.Parameters.AddWithValue("@desc", course.Description);
-            cmd.Parameters.AddWithValue("@cat", course.Category);
-            cmd.Parameters.AddWithValue("@tid", course.CreatedByTeacherId);
+            SqlCommand cmd = new("INSERT INTO Course (CourseName, Description, Category, CreatedByTeacherId, PdfFilePath) VALUES (@name, @desc, @cat, @tid, @pdf)", con);
+            cmd.Parameters.AddWithValue("@name", dto.CourseName);
+            cmd.Parameters.AddWithValue("@desc", dto.Description);
+            cmd.Parameters.AddWithValue("@cat", dto.Category);
+            cmd.Parameters.AddWithValue("@tid", dto.CreatedByTeacherId);
+            cmd.Parameters.AddWithValue("@pdf", (object?)filePath ?? DBNull.Value);
+
             con.Open();
             cmd.ExecuteNonQuery();
-            return Ok(new { message = "Course Created" });
+
+            return Ok(new { message = "Course Created with PDF" });
         }
+
+
+
 
 
         [HttpGet("MyCourses/{teacherId}")]
@@ -79,11 +134,14 @@ namespace Edu_LMS_Greysoft.Controllers
                     CourseName = reader["CourseName"].ToString(),
                     Description = reader["Description"].ToString(),
                     Category = reader["Category"].ToString(),
-                    CreatedByTeacherId = (int)reader["CreatedByTeacherId"]
+                    CreatedByTeacherId = (int)reader["CreatedByTeacherId"],
+                    PdfFilePath = reader["PdfFilePath"] != DBNull.Value ? reader["PdfFilePath"].ToString() : null
+
                 });
             }
             return Ok(courses);
         }
+
 
 
         [HttpPut("UpdateCourse")]
@@ -129,20 +187,39 @@ namespace Edu_LMS_Greysoft.Controllers
 
 
         [HttpPost("CreateAssignment")]
-        public IActionResult CreateAssignment(Assignment assignment)
+        public IActionResult CreateAssignment([FromForm] Assignment assignment, IFormFile file)
         {
+            if (file != null && file.Length > 0)
+            {
+                string uploadsFolder = Path.Combine(Directory.GetCurrentDirectory(), "Uploads");
+                if (!Directory.Exists(uploadsFolder))
+                    Directory.CreateDirectory(uploadsFolder);
+
+                string uniqueFileName = Guid.NewGuid().ToString() + Path.GetExtension(file.FileName);
+                string filePath = Path.Combine(uploadsFolder, uniqueFileName);
+
+                using (var fileStream = new FileStream(filePath, FileMode.Create))
+                {
+                    file.CopyTo(fileStream);
+                }
+
+                assignment.UploadFilePath = "Uploads/" + uniqueFileName;
+            }
+
             using SqlConnection con = new(_connectionString);
             SqlCommand cmd = new("INSERT INTO Assignment (CourseId, TeacherId, Title, Description, UploadFilePath, DueDate) VALUES (@cid, @tid, @title, @desc, @file, @due)", con);
             cmd.Parameters.AddWithValue("@cid", assignment.CourseId);
             cmd.Parameters.AddWithValue("@tid", assignment.TeacherId);
             cmd.Parameters.AddWithValue("@title", assignment.Title);
             cmd.Parameters.AddWithValue("@desc", assignment.Description);
-            cmd.Parameters.AddWithValue("@file", assignment.UploadFilePath);
+            cmd.Parameters.AddWithValue("@file", assignment.UploadFilePath ?? string.Empty);
             cmd.Parameters.AddWithValue("@due", assignment.DueDate);
             con.Open();
             cmd.ExecuteNonQuery();
-            return Ok(new { message = "Assignment Created" });
+
+            return Ok(new { message = "Assignment Created with PDF file" });
         }
+
 
 
         [HttpPost("AssignAssignmentToStudent")]
@@ -156,6 +233,33 @@ namespace Edu_LMS_Greysoft.Controllers
             cmd.ExecuteNonQuery();
             return Ok(new { message = "Assignment assigned to student successfully" });
         }
+
+        [HttpGet("MyAssignments/{teacherId}")]
+        public IActionResult GetAssignmentsByTeacher(int teacherId)
+        {
+            List<Assignment> assignments = new();
+            using SqlConnection con = new(_connectionString);
+            SqlCommand cmd = new("SELECT * FROM Assignment WHERE TeacherId = @tid", con);
+            cmd.Parameters.AddWithValue("@tid", teacherId);
+            con.Open();
+            SqlDataReader reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                assignments.Add(new Assignment
+                {
+                    AssignmentId = (int)reader["AssignmentId"],
+                    CourseId = reader["CourseId"] != DBNull.Value ? (int?)reader["CourseId"] : null,
+                    TeacherId = reader["TeacherId"] != DBNull.Value ? (int?)reader["TeacherId"] : null,
+                    Title = reader["Title"].ToString(),
+                    Description = reader["Description"].ToString(),
+                    UploadFilePath = reader["UploadFilePath"].ToString(),
+                    DueDate = reader["DueDate"] != DBNull.Value ? DateOnly.FromDateTime(Convert.ToDateTime(reader["DueDate"])) : null,
+                    CreatedAt = reader["CreatedAt"] != DBNull.Value ? Convert.ToDateTime(reader["CreatedAt"]) : null
+                });
+            }
+            return Ok(assignments);
+        }
+
 
 
         [HttpGet("Submissions/{assignmentId}")]
@@ -255,42 +359,37 @@ namespace Edu_LMS_Greysoft.Controllers
         }
 
 
-        [HttpGet("EnrolledStudents/{teacherId}")]
-        public IActionResult GetEnrolledStudents(int teacherId)
+        [HttpGet("ApprovedStudents")]
+        public IActionResult GetApprovedStudents()
         {
-            List<object> enrolledStudents = new();
+            List<object> approvedStudents = new();
 
             using SqlConnection con = new(_connectionString);
             SqlCommand cmd = new(@"
         SELECT 
-            sc.StudentId,
-            st.FullName AS StudentName,
-            st.Email,
-            c.CourseId,
-            c.CourseName
-        FROM StudentCourse sc
-        INNER JOIN Student st ON sc.StudentId = st.StudentId
-        INNER JOIN Course c ON sc.CourseId = c.CourseId
-        WHERE c.CreatedByTeacherId = @tid", con);
-
-            cmd.Parameters.AddWithValue("@tid", teacherId);
+            StudentId,
+            FullName AS StudentName,
+            Email
+        FROM Student
+        WHERE IsApproved = 1", con);
 
             con.Open();
             using SqlDataReader reader = cmd.ExecuteReader();
             while (reader.Read())
             {
-                enrolledStudents.Add(new
+                approvedStudents.Add(new
                 {
                     StudentId = reader["StudentId"],
                     StudentName = reader["StudentName"].ToString(),
-                    Email = reader["Email"].ToString(),
-                    CourseId = reader["CourseId"],
-                    CourseName = reader["CourseName"].ToString()
+                    Email = reader["Email"].ToString()
                 });
             }
 
-            return Ok(enrolledStudents);
+            return Ok(approvedStudents);
         }
+
+
+
 
 
 
@@ -307,8 +406,36 @@ namespace Edu_LMS_Greysoft.Controllers
             int rows = cmd.ExecuteNonQuery();
             return Ok(new { message = rows > 0 ? "Report Updated" : "Report Not Found" });
         }
+
+        [HttpGet("StudentAssignments/{studentId}")]
+        public IActionResult GetStudentAssignments(int studentId)
+        {
+            List<object> assignments = new();
+            using SqlConnection con = new(_connectionString);
+            SqlCommand cmd = new(@"
+        SELECT A.AssignmentId, A.Title, A.Description, A.UploadFilePath, A.DueDate, C.CourseName
+        FROM AssignmentStudent AS ASI
+        JOIN Assignment AS A ON A.AssignmentId = ASI.AssignmentId
+        JOIN Course AS C ON A.CourseId = C.CourseId
+        WHERE ASI.StudentId = @sid", con);
+
+            cmd.Parameters.AddWithValue("@sid", studentId);
+            con.Open();
+            using SqlDataReader reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                assignments.Add(new
+                {
+                    AssignmentId = reader["AssignmentId"],
+                    Title = reader["Title"],
+                    Description = reader["Description"],
+                    UploadFilePath = reader["UploadFilePath"],
+                    DueDate = reader["DueDate"],
+                    CourseName = reader["CourseName"]
+                });
+            }
+            return Ok(assignments);
+        }
+
     }
 }
-
-
-

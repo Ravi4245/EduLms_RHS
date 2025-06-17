@@ -1,4 +1,5 @@
-﻿using EduLms_RHS.Dto;
+﻿
+using EduLms_RHS.Dto;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using Microsoft.IdentityModel.Tokens;
@@ -136,7 +137,3 @@ public class LoginController : ControllerBase
         return Unauthorized("Invalid email or password.");
     }
 }
-
-
-
-
