@@ -14,7 +14,11 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddDbContext<EduLmsGreysoftContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("Lms")));
 
-//  Allow Angular or any frontend to access API (optional but useful)
+
+builder.Services.Configure<Emailsetting>(builder.Configuration.GetSection("EmailSettings"));
+
+builder.Services.AddTransient<EmailService>();
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll",

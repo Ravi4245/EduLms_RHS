@@ -1,8 +1,8 @@
 ﻿using EduLms_RHS.Dto;
 using EduLms_RHS.Models;
-using Microsoft.AspNetCore.Authorization; // ✅ Add this
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
+using System.Data;
 
 [Route("api/[controller]")]
 [ApiController]
@@ -10,22 +10,20 @@ public class StudentController : ControllerBase
 {
     private readonly IConfiguration _configuration;
     private readonly string _connectionString;
+    private readonly EmailService _emailService;
 
-    public StudentController(IConfiguration configuration)
+    public StudentController(IConfiguration configuration,EmailService emailService)
     {
         _configuration = configuration;
+        _emailService = emailService;
         _connectionString = _configuration.GetConnectionString("Lms");
     }
-
-    // ❌ No authorization needed to register
     [HttpPost("RegisterStudent")]
-    public IActionResult RegisterStudent(RegisterStudentDto student)
+    public async Task<IActionResult> RegisterStudent(RegisterStudentDto student)
     {
         using SqlConnection con = new(_connectionString);
-        con.Open();
-
-        SqlCommand cmd = new("INSERT INTO Student (FullName, Email, Password, PhoneNumber, DateOfBirth, Gender, Address, GradeLevel, StudentNo, CreatedAt) " +
-                             "VALUES (@FullName, @Email, @Password, @PhoneNumber, @DateOfBirth, @Gender, @Address, @GradeLevel, @StudentNo, GETDATE())", con);
+        SqlCommand cmd = new("sp_RegisterStudent", con);
+        cmd.CommandType = CommandType.StoredProcedure;
 
         cmd.Parameters.AddWithValue("@FullName", student.FullName);
         cmd.Parameters.AddWithValue("@Email", student.Email);
@@ -37,233 +35,210 @@ public class StudentController : ControllerBase
         cmd.Parameters.AddWithValue("@GradeLevel", student.GradeLevel);
         cmd.Parameters.AddWithValue("@StudentNo", student.StudentNo);
 
+        con.Open();
         int rows = cmd.ExecuteNonQuery();
-        return rows > 0 ? Ok(new { message = "✅ Student registration successful. Waiting for admin approval." }) : BadRequest("Registration failed.");
-    }
 
+        if (rows > 0)
+        {
+            // Compose welcome email
+            string subject = "🎉 Registration Successful - Awaiting Admin Approval";
+            string body = $@"
+            <p style='font-family:Segoe UI, sans-serif; font-size:14px;'>
+                Dear <strong>{student.FullName}</strong>,
+            </p>
+            <p>
+                Thank you for registering on our <strong>Learning Management System (LMS)</strong>! Your registration was successful and is now awaiting admin approval.
+            </p>
+            <p>
+                You will receive an email notification once your account is approved.
+            </p>
+            <br/>
+            <p>
+                Best regards,<br/>
+                <strong>RHS Team</strong> 🎓
+            </p>";
+
+            try
+            {
+                await _emailService.SendEmailAsync(student.Email, subject, body);
+            }
+            catch (Exception ex)
+            {
+                // Log email sending error but don't fail registration
+                Console.WriteLine("Failed to send registration email: " + ex.Message);
+            }
+
+            return Ok(new { message = "✅ Student registration successful. Waiting for admin approval." });
+        }
+        else
+        {
+            return BadRequest("Registration failed.");
+        }
+    }
 
 
     [HttpGet("Profile/{studentId}")]
-    public IActionResult GetProfile(int studentId)
-    {
-        using SqlConnection con = new(_connectionString);
-        SqlCommand cmd = new("SELECT * FROM Student WHERE StudentId = @id", con);
-        cmd.Parameters.AddWithValue("@id", studentId);
-        con.Open();
-        using SqlDataReader reader = cmd.ExecuteReader();
-        if (reader.Read())
+        public IActionResult GetProfile(int studentId)
         {
-            var student = new
+            using SqlConnection con = new(_connectionString);
+            SqlCommand cmd = new("sp_GetStudentProfile", con);
+            cmd.CommandType = CommandType.StoredProcedure;
+            cmd.Parameters.AddWithValue("@StudentId", studentId);
+            con.Open();
+
+            using SqlDataReader reader = cmd.ExecuteReader();
+            if (reader.Read())
             {
-                StudentId = reader["StudentId"],
-                FullName = reader["FullName"],
-                Email = reader["Email"],
-                PhoneNumber = reader["PhoneNumber"],
-                DOB = reader["DateOfBirth"],
-                Gender = reader["Gender"],
-                Address = reader["Address"],
-                GradeLevel = reader["GradeLevel"],
-                StudentNo = reader["StudentNo"]
-            };
-            return Ok(student);
+                var student = new
+                {
+                    StudentId = reader["StudentId"],
+                    FullName = reader["FullName"],
+                    Email = reader["Email"],
+                    PhoneNumber = reader["PhoneNumber"],
+                    DOB = reader["DateOfBirth"],
+                    Gender = reader["Gender"],
+                    Address = reader["Address"],
+                    GradeLevel = reader["GradeLevel"],
+                    StudentNo = reader["StudentNo"]
+                };
+                return Ok(student);
+            }
+            return NotFound("Student not found");
         }
-        return NotFound("Student not found");
-    }
 
-    [HttpGet("EnrolledCourses/{studentId}")]
-    public IActionResult GetEnrolledCourses(int studentId)
-    {
-        using SqlConnection con = new(_connectionString);
-        SqlCommand cmd = new(@"
-        SELECT c.CourseId, c.CourseName, c.Description, c.Category, c.PdfFilePath
-        FROM Course c
-        INNER JOIN StudentCourse sc ON sc.CourseId = c.CourseId
-        WHERE sc.StudentId = @sid", con);
-
-        cmd.Parameters.AddWithValue("@sid", studentId);
-        con.Open();
-
-        using SqlDataReader reader = cmd.ExecuteReader();
-        List<object> courses = new();
-
-        while (reader.Read())
+        [HttpGet("EnrolledCourses/{studentId}")]
+        public IActionResult GetEnrolledCourses(int studentId)
         {
-            courses.Add(new
+            using SqlConnection con = new(_connectionString);
+            SqlCommand cmd = new("sp_GetEnrolledCourses", con);
+            cmd.CommandType = CommandType.StoredProcedure;
+            cmd.Parameters.AddWithValue("@StudentId", studentId);
+            con.Open();
+
+            using SqlDataReader reader = cmd.ExecuteReader();
+            List<object> courses = new();
+            while (reader.Read())
             {
-                CourseId = reader["CourseId"],
-                CourseName = reader["CourseName"],
-                Description = reader["Description"],
-                Category = reader["Category"],
-                PdfFilePath = reader["PdfFilePath"] != DBNull.Value ? reader["PdfFilePath"].ToString() : null
-            });
+                courses.Add(new
+                {
+                    CourseId = reader["CourseId"],
+                    CourseName = reader["CourseName"],
+                    Description = reader["Description"],
+                    Category = reader["Category"]
+                });
+            }
+            return Ok(courses);
         }
 
-        return Ok(courses);
-    }
-
-    [HttpGet("MyCourses/{studentId}")]
-    public IActionResult GetMyCourses(int studentId)
-    {
-        using SqlConnection con = new SqlConnection(_connectionString);
-        SqlCommand cmd = new SqlCommand(@"
-        SELECT c.CourseId, c.CourseName, c.Description, c.Category, c.PdfFilePath
-        FROM Course c
-        INNER JOIN StudentCourse sc ON sc.CourseId = c.CourseId
-        WHERE sc.StudentId = @sid", con);
-
-        cmd.Parameters.AddWithValue("@sid", studentId);
-        con.Open();
-
-        List<object> courses = new();
-        using SqlDataReader reader = cmd.ExecuteReader();
-        while (reader.Read())
+        [HttpPost("Enroll")]
+        public IActionResult EnrollCourse(int studentId, int courseId)
         {
-            courses.Add(new
+            using SqlConnection con = new(_connectionString);
+            SqlCommand cmd = new("sp_EnrollCourse", con);
+            cmd.CommandType = CommandType.StoredProcedure;
+            cmd.Parameters.AddWithValue("@StudentId", studentId);
+            cmd.Parameters.AddWithValue("@CourseId", courseId);
+            con.Open();
+            cmd.ExecuteNonQuery();
+            return Ok(new { message = "Enrolled successfully." });
+        }
+
+        [HttpGet("MyAssignments/{studentId}")]
+        public IActionResult GetMyAssignments(int studentId)
+        {
+            using SqlConnection con = new(_connectionString);
+            SqlCommand cmd = new("sp_GetMyAssignments", con);
+            cmd.CommandType = CommandType.StoredProcedure;
+            cmd.Parameters.AddWithValue("@StudentId", studentId);
+            con.Open();
+
+            using SqlDataReader reader = cmd.ExecuteReader();
+            List<object> assignments = new();
+            while (reader.Read())
             {
-                CourseId = reader["CourseId"],
-                CourseName = reader["CourseName"],
-                Description = reader["Description"],
-                Category = reader["Category"],
-                PdfFilePath = reader["PdfFilePath"] != DBNull.Value ? reader["PdfFilePath"].ToString() : null
-            });
+                assignments.Add(new
+                {
+                    AssignmentId = reader["AssignmentId"],
+                    Title = reader["Title"],
+                    Description = reader["Description"],
+                    File = reader["UploadFilePath"],
+                    DueDate = reader["DueDate"]
+                });
+            }
+            return Ok(assignments);
         }
 
-        return Ok(courses);
-    }
-
-
-
-    [HttpPost("Enroll")]
-    public IActionResult EnrollCourse(int studentId, int courseId)
-    {
-        using SqlConnection con = new(_connectionString);
-        SqlCommand cmd = new("INSERT INTO StudentCourse (StudentId, CourseId) VALUES (@sid, @cid)", con);
-        cmd.Parameters.AddWithValue("@sid", studentId);
-        cmd.Parameters.AddWithValue("@cid", courseId);
-        con.Open();
-        cmd.ExecuteNonQuery();
-        return Ok(new { message = "Enrolled successfully." });
-    }
-
-
-    [HttpGet("MyAssignments/{studentId}")]
-    public IActionResult GetMyAssignments(int studentId)
-    {
-        using SqlConnection con = new(_connectionString);
-        SqlCommand cmd = new(@"
-        SELECT a.AssignmentId, a.Title, a.Description, a.UploadFilePath, a.DueDate
-        FROM Assignment a
-        INNER JOIN AssignmentStudent sa ON sa.AssignmentId = a.AssignmentId
-        WHERE sa.StudentId = @sid
-        AND NOT EXISTS (
-            SELECT 1 FROM AssignmentSubmission sub
-            WHERE sub.AssignmentId = a.AssignmentId AND sub.StudentId = @sid
-        )", con);
-
-        cmd.Parameters.AddWithValue("@sid", studentId);
-        con.Open();
-
-        using SqlDataReader reader = cmd.ExecuteReader();
-        List<object> assignments = new();
-        while (reader.Read())
+        [HttpPost("SubmitAssignment")]
+        public async Task<IActionResult> SubmitAssignment(
+            [FromQuery] int assignmentId,
+            [FromQuery] int studentId,
+            IFormFile file)
         {
-            assignments.Add(new
+            if (file == null || file.Length == 0)
+                return BadRequest("❌ No file uploaded");
+
+            var folderPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "StudentSubmissions");
+            if (!Directory.Exists(folderPath))
+                Directory.CreateDirectory(folderPath);
+
+            var fileName = $"{studentId}_{assignmentId}_{Path.GetFileName(file.FileName)}";
+            var filePath = Path.Combine(folderPath, fileName);
+
+            using (var stream = new FileStream(filePath, FileMode.Create))
             {
-                AssignmentId = reader["AssignmentId"],
-                Title = reader["Title"],
-                Description = reader["Description"],
-                File = reader["UploadFilePath"],
-                DueDate = reader["DueDate"]
-            });
-        }
+                await file.CopyToAsync(stream);
+            }
 
-        return Ok(assignments);
-    }
+            var relativePath = $"/StudentSubmissions/{fileName}";
 
+            using SqlConnection con = new(_connectionString);
+            con.Open();
 
+            SqlCommand checkCmd = new("sp_CheckAssignmentAndStudent", con);
+            checkCmd.CommandType = CommandType.StoredProcedure;
+            checkCmd.Parameters.AddWithValue("@AssignmentId", assignmentId);
+            checkCmd.Parameters.AddWithValue("@StudentId", studentId);
 
-    [HttpPost("SubmitAssignment")]
-    public async Task<IActionResult> SubmitAssignment(
-    [FromQuery] int assignmentId,
-    [FromQuery] int studentId,
-    IFormFile file)
-    {
-        if (file == null || file.Length == 0)
-            return BadRequest("❌ No file uploaded");
-
-        var folderPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "StudentSubmissions");
-
-        if (!Directory.Exists(folderPath))
-            Directory.CreateDirectory(folderPath);
-
-        var fileName = $"{studentId}_{assignmentId}_{Path.GetFileName(file.FileName)}";
-        var filePath = Path.Combine(folderPath, fileName);
-
-        using (var stream = new FileStream(filePath, FileMode.Create))
-        {
-            await file.CopyToAsync(stream);
-        }
-
-        var relativePath = $"/StudentSubmissions/{fileName}";
-
-        using SqlConnection con = new(_connectionString);
-        con.Open();
-
-        // ✅ Check if AssignmentId and StudentId exist
-        SqlCommand checkCmd = new(@"
-        SELECT COUNT(*) 
-        FROM Assignment a, Student s 
-        WHERE a.AssignmentId = @aid AND s.StudentId = @sid", con);
-        checkCmd.Parameters.AddWithValue("@aid", assignmentId);
-        checkCmd.Parameters.AddWithValue("@sid", studentId);
-
-        int exists = (int)checkCmd.ExecuteScalar();
-        if (exists == 0)
-        {
-            return BadRequest("❌ Assignment or Student not found.");
-        }
-
-        SqlCommand cmd = new(@"
-        INSERT INTO AssignmentSubmission (AssignmentId, StudentId, SubmittedFilePath, SubmittedDate)
-        VALUES (@aid, @sid, @file, @submittedDate)", con);
-
-        cmd.Parameters.AddWithValue("@aid", assignmentId);
-        cmd.Parameters.AddWithValue("@sid", studentId);
-        cmd.Parameters.AddWithValue("@file", relativePath);
-        cmd.Parameters.AddWithValue("@submittedDate", DateTime.Now);
-
-        cmd.ExecuteNonQuery();
-
-        return Ok(new { message = "✅ Assignment uploaded successfully" });
-    }
-
-
-
-
-
-    [HttpGet("PerformanceReport/{studentId}")]
-    public IActionResult GetPerformanceReport(int studentId)
-    {
-        using SqlConnection con = new(_connectionString);
-        SqlCommand cmd = new(@"
-            SELECT p.CourseId, c.CourseName, p.AverageGrade, p.Remarks
-            FROM PerformanceReport p
-            INNER JOIN Course c ON c.CourseId = p.CourseId
-            WHERE p.StudentId = @sid", con);
-        cmd.Parameters.AddWithValue("@sid", studentId);
-        con.Open();
-        using SqlDataReader reader = cmd.ExecuteReader();
-        List<object> reports = new();
-        while (reader.Read())
-        {
-            reports.Add(new
+            int exists = (int)checkCmd.ExecuteScalar();
+            if (exists == 0)
             {
-                CourseId = reader["CourseId"],
-                CourseName = reader["CourseName"],
-                Grade = reader["AverageGrade"],
-                Remarks = reader["Remarks"]
-            });
+                return BadRequest("❌ Assignment or Student not found.");
+            }
+
+            SqlCommand cmd = new("sp_SubmitAssignment", con);
+            cmd.CommandType = CommandType.StoredProcedure;
+            cmd.Parameters.AddWithValue("@AssignmentId", assignmentId);
+            cmd.Parameters.AddWithValue("@StudentId", studentId);
+            cmd.Parameters.AddWithValue("@FilePath", relativePath);
+            cmd.Parameters.AddWithValue("@SubmittedDate", DateTime.Now);
+
+            cmd.ExecuteNonQuery();
+            return Ok(new { message = "✅ Assignment uploaded successfully" });
         }
-        return Ok(reports);
-    }
+
+        [HttpGet("PerformanceReport/{studentId}")]
+        public IActionResult GetPerformanceReport(int studentId)
+        {
+            using SqlConnection con = new(_connectionString);
+            SqlCommand cmd = new("sp_GetPerformanceReport", con);
+            cmd.CommandType = CommandType.StoredProcedure;
+            cmd.Parameters.AddWithValue("@StudentId", studentId);
+            con.Open();
+
+            using SqlDataReader reader = cmd.ExecuteReader();
+            List<object> reports = new();
+            while (reader.Read())
+            {
+                reports.Add(new
+                {
+                    CourseId = reader["CourseId"],
+                    CourseName = reader["CourseName"],
+                    Grade = reader["AverageGrade"],
+                    Remarks = reader["Remarks"]
+                });
+            }
+            return Ok(reports);
+        }
+
+    
 }

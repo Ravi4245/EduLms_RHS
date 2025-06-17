@@ -24,7 +24,7 @@
 
   <ItemGroup>
     <Folder Include="Uploads\" />
-    <Folder Include="wwwroot\CoursePdf\" />
+    <Folder Include="wwwroot\CoursePdfs\" />
     <Folder Include="wwwroot\StudentSubmissions\" />
     <Folder Include="wwwroot\PDFs\" />
   </ItemGroup>

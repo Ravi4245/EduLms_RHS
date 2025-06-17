@@ -4,7 +4,6 @@ using EduLms_RHS.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
-using Microsoft.Extensions.Configuration;
 using System.Data;
 
 namespace Edu_LMS_Greysoft.Controllers
@@ -14,37 +13,84 @@ namespace Edu_LMS_Greysoft.Controllers
     public class TeacherController : ControllerBase
     {
         private readonly IConfiguration _configuration;
+        private readonly EmailService _emailService;
         private readonly string _connectionString;
 
-        public TeacherController(IConfiguration configuration)
+        public TeacherController(IConfiguration configuration, EmailService emailService)
         {
             _configuration = configuration;
+            _emailService = emailService;
             _connectionString = _configuration.GetConnectionString("Lms");
         }
 
         [HttpPost("RegisterTeacher")]
-        public IActionResult RegisterTeacher(RegisterTeacherDto teacher)
+        public async Task<IActionResult> RegisterTeacher(RegisterTeacherDto teacher)
         {
-            using SqlConnection con = new(_connectionString);
-            con.Open();
+            try
+            {
+                using SqlConnection con = new(_connectionString);
+                con.Open();
 
-            SqlCommand cmd = new("INSERT INTO Teacher (FullName, Email, Password, PhoneNumber, Qualification, ExperienceYears, Specialization, TeacherNo, CreatedAt) " +
-                                 "VALUES (@FullName, @Email, @Password, @PhoneNumber, @Qualification, @ExperienceYears, @Specialization, @TeacherNo, GETDATE())", con);
+                SqlCommand cmd = new(@"
+                    INSERT INTO Teacher (
+                        FullName, Email, Password, PhoneNumber, Qualification,
+                        ExperienceYears, Specialization, TeacherNo, CreatedAt
+                    )
+                    VALUES (
+                        @FullName, @Email, @Password, @PhoneNumber, @Qualification,
+                        @ExperienceYears, @Specialization, @TeacherNo, GETDATE()
+                    )", con);
 
-            cmd.Parameters.AddWithValue("@FullName", teacher.FullName);
-            cmd.Parameters.AddWithValue("@Email", teacher.Email);
-            cmd.Parameters.AddWithValue("@Password", teacher.Password);
-            cmd.Parameters.AddWithValue("@PhoneNumber", teacher.PhoneNumber);
-            cmd.Parameters.AddWithValue("@Qualification", teacher.Qualification);
-            cmd.Parameters.AddWithValue("@ExperienceYears", teacher.ExperienceYears);
-            cmd.Parameters.AddWithValue("@Specialization", teacher.Specialization);
-            cmd.Parameters.AddWithValue("@TeacherNo", teacher.TeacherNo);
+                cmd.Parameters.AddWithValue("@FullName", teacher.FullName);
+                cmd.Parameters.AddWithValue("@Email", teacher.Email);
+                cmd.Parameters.AddWithValue("@Password", teacher.Password); // ⚠️ Use hashing!
+                cmd.Parameters.AddWithValue("@PhoneNumber", teacher.PhoneNumber);
+                cmd.Parameters.AddWithValue("@Qualification", teacher.Qualification);
+                cmd.Parameters.AddWithValue("@ExperienceYears", teacher.ExperienceYears);
+                cmd.Parameters.AddWithValue("@Specialization", teacher.Specialization);
+                cmd.Parameters.AddWithValue("@TeacherNo", teacher.TeacherNo);
 
-            int rows = cmd.ExecuteNonQuery();
-            return rows > 0
-                ? Ok(new { message = "✅ Teacher registration successful. Waiting for admin approval." })
-                : BadRequest(new { message = "Registration failed." });
+                int rows = cmd.ExecuteNonQuery();
+
+                string subject = "🎉 Registration Received – Awaiting Approval";
+
+                string body = $@"
+                    <p style='font-family:Segoe UI, sans-serif; font-size:14px;'>
+                        Dear <strong>{teacher.FullName}</strong>, 👋
+                    </p>
+                    <p>
+                        We're excited to welcome you to our <strong>Learning Management System (LMS)</strong> community. 📚<br/>
+                        Thank you for registering as a teacher – we truly value your expertise and commitment to education. 🙌
+                    </p>
+                    <p>
+                        Your account has been successfully created and is currently <strong>awaiting admin approval</strong>. 🔐<br/>
+                        You’ll be able to access your dashboard shortly.
+                    </p>
+                    <p>
+                        If you have any questions, feel free to reach out anytime.
+                    </p>
+                    <br/>
+                    <p>
+                        Best regards,<br/> 
+                        <strong>RHS Team</strong> 🎓
+                    </p>";
+
+                await _emailService.SendEmailAsync(teacher.Email, subject, body);
+
+                return Ok(new { message = "✅ Teacher registered successfully. Awaiting admin approval." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new
+                {
+                    message = "❌ Error occurred during teacher registration.",
+                    error = ex.Message,
+                    stackTrace = ex.StackTrace
+                });
+            }
         }
+    
+
 
 
         [HttpGet("Profile/{teacherId}")]
@@ -73,28 +119,35 @@ namespace Edu_LMS_Greysoft.Controllers
         }
 
 
-
-
         [HttpPost("CreateCourse")]
         public async Task<IActionResult> CreateCourse([FromForm] CourseFormDto dto)
         {
+            if (!ModelState.IsValid)
+            {
+                var errors = ModelState
+                    .Where(ms => ms.Value.Errors.Count > 0)
+                    .Select(ms => new
+                    {
+                        Field = ms.Key,
+                        Messages = ms.Value.Errors.Select(e => e.ErrorMessage).ToArray()
+                    });
+
+                return BadRequest(new { message = "Validation failed", errors });
+            }
+
             string? filePath = null;
 
             if (dto.PdfFile != null && dto.PdfFile.Length > 0)
             {
                 var uploadsFolder = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "CoursePdfs");
                 if (!Directory.Exists(uploadsFolder))
-                {
                     Directory.CreateDirectory(uploadsFolder);
-                }
 
                 var uniqueFileName = $"{Guid.NewGuid()}_{dto.PdfFile.FileName}";
                 var fullPath = Path.Combine(uploadsFolder, uniqueFileName);
 
-                using (var stream = new FileStream(fullPath, FileMode.Create))
-                {
-                    await dto.PdfFile.CopyToAsync(stream);
-                }
+                using var stream = new FileStream(fullPath, FileMode.Create);
+                await dto.PdfFile.CopyToAsync(stream);
 
                 filePath = $"/CoursePdfs/{uniqueFileName}";
             }
@@ -112,6 +165,8 @@ namespace Edu_LMS_Greysoft.Controllers
 
             return Ok(new { message = "Course Created with PDF" });
         }
+
+
 
 
 
@@ -159,18 +214,59 @@ namespace Edu_LMS_Greysoft.Controllers
             return Ok(new { message = "Course Updated" });
         }
 
-
         [HttpPost("AssignCourseToStudent")]
-        public IActionResult AssignCourseToStudent(int studentId, int courseId)
+        public async Task<IActionResult> AssignCourseToStudent(int studentId, int courseId)
         {
-            using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new("INSERT INTO StudentCourse (StudentId, CourseId) VALUES (@sid, @cid)", con);
-            cmd.Parameters.AddWithValue("@sid", studentId);
-            cmd.Parameters.AddWithValue("@cid", courseId);
-            con.Open();
-            cmd.ExecuteNonQuery();
-            return Ok(new { message = "Course assigned to student successfully" });
+            try
+            {
+                using SqlConnection con = new(_connectionString);
+                con.Open();
+
+                // Insert assignment
+                SqlCommand insertCmd = new("INSERT INTO StudentCourse (StudentId, CourseId) VALUES (@sid, @cid)", con);
+                insertCmd.Parameters.AddWithValue("@sid", studentId);
+                insertCmd.Parameters.AddWithValue("@cid", courseId);
+                insertCmd.ExecuteNonQuery();
+
+                // Get student details
+                SqlCommand studentCmd = new("SELECT FullName, Email FROM Student WHERE StudentId = @sid", con);
+                studentCmd.Parameters.AddWithValue("@sid", studentId);
+                var reader = studentCmd.ExecuteReader();
+
+                if (!reader.Read())
+                {
+                    return NotFound(new { message = "Student not found." });
+                }
+
+                string studentName = reader["FullName"].ToString();
+                string studentEmail = reader["Email"].ToString();
+                reader.Close();
+
+                // Get course name
+                SqlCommand courseCmd = new("SELECT CourseName FROM Course WHERE CourseId = @cid", con);
+                courseCmd.Parameters.AddWithValue("@cid", courseId);
+                string courseName = courseCmd.ExecuteScalar()?.ToString() ?? "your course";
+
+                // Compose email content
+                string subject = "📚 New Course Assigned to You!";
+                string body = $@"
+            <p>Dear <strong>{studentName}</strong>,</p>
+            <p>You have been assigned a new course: <strong>{courseName}</strong>.</p>
+            <p>Please log in to your dashboard to start learning.</p>
+            <br/>
+            <p>Best regards,<br/>EduLMS Team 🎓</p>";
+
+                // Send email
+                await _emailService.SendEmailAsync(studentEmail, subject, body);
+
+                return Ok(new { message = "Course assigned to student successfully and email sent." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error occurred while assigning course.", error = ex.Message });
+            }
         }
+
 
 
         [HttpDelete("DeleteCourse/{courseId}/{teacherId}")]
