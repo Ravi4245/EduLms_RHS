@@ -6,23 +6,43 @@ using Microsoft.Extensions.Configuration;
 using System.Data;
 using Microsoft.AspNetCore.Authorization;
 using EduLms_RHS.Models;
+using Microsoft.EntityFrameworkCore;
 
 namespace Edu_LMS_Greysoft.Controllers
 {
-    [ApiController]
     [Route("api/[controller]")]
-
+    [ApiController]
+   
     public class AdminController : ControllerBase
     {
         private readonly IConfiguration _configuration;
         private readonly string _connectionString;
         private readonly EmailService _emailService;
+        private readonly EduLmsGreysoftContext _context;  // Declare _context here
 
-        public AdminController(IConfiguration configuration, EmailService emailService)
+        public AdminController(IConfiguration configuration, EmailService emailService,EduLmsGreysoftContext context)
         {
             _configuration = configuration;
             _emailService = emailService;
             _connectionString = _configuration.GetConnectionString("Lms");
+            _context = context;
+        }
+
+        [HttpGet("ApprovedStudentsCount")]
+        public async Task<IActionResult> GetApprovedStudentsCount()
+        {
+            // Assuming you have a Students table with an "IsApproved" boolean property
+            var count = await _context.Students.CountAsync(s => s.IsApproved == true);
+            return Ok(new { count });
+        }
+
+        // GET: api/Admin/ApprovedTeachersCount
+        [HttpGet("ApprovedTeachersCount")]
+        public async Task<IActionResult> GetApprovedTeachersCount()
+        {
+            // Assuming you have a Teachers table with an "IsApproved" boolean property
+            var count = await _context.Teachers.CountAsync(t => t.IsApproved == true);
+            return Ok(new { count });
         }
 
         // ------------------ 1. View Pending Students ------------------
@@ -435,24 +455,41 @@ namespace Edu_LMS_Greysoft.Controllers
         {
             using SqlConnection con = new(_connectionString);
             con.Open();
+            using var transaction = con.BeginTransaction();
 
-            // First, delete all StudentCourse entries for this CourseId
-            SqlCommand deleteRelated = new("DELETE FROM StudentCourse WHERE CourseId = @id", con);
-            deleteRelated.Parameters.AddWithValue("@id", id);
-            deleteRelated.ExecuteNonQuery();
-
-            // Now delete the Course itself
-            SqlCommand deleteCourse = new("DELETE FROM Course WHERE CourseId = @id", con);
-            deleteCourse.Parameters.AddWithValue("@id", id);
-            int rows = deleteCourse.ExecuteNonQuery();
-
-            if (rows > 0)
+            try
             {
-                return Ok(new { message = "Course deleted successfully" });
+                // Delete related StudentCourse entries
+                using (SqlCommand deleteRelated = new("DELETE FROM StudentCourse WHERE CourseId = @id", con, transaction))
+                {
+                    deleteRelated.Parameters.AddWithValue("@id", id);
+                    deleteRelated.ExecuteNonQuery();
+                }
+
+                // Delete the Course itself
+                int rows;
+                using (SqlCommand deleteCourse = new("DELETE FROM Course WHERE CourseId = @id", con, transaction))
+                {
+                    deleteCourse.Parameters.AddWithValue("@id", id);
+                    rows = deleteCourse.ExecuteNonQuery();
+                }
+
+                if (rows > 0)
+                {
+                    transaction.Commit();
+                    return Ok(new { message = "Course deleted successfully" });
+                }
+                else
+                {
+                    transaction.Rollback();
+                    return NotFound(new { message = "Course not found" });
+                }
             }
-            else
+            catch (Exception ex)
             {
-                return NotFound(new { message = "Course not found" });
+                transaction.Rollback();
+                // Ideally log the exception here
+                return StatusCode(500, new { message = "An error occurred while deleting the course", detail = ex.Message });
             }
         }
 
@@ -486,48 +523,92 @@ namespace Edu_LMS_Greysoft.Controllers
         [Authorize]
         public IActionResult DeleteApprovedStudent(int id)
         {
-            using SqlConnection con = new(_connectionString);
-            con.Open();
-
-            SqlCommand checkCmd = new("SELECT COUNT(*) FROM Student WHERE StudentId = @id AND IsApproved = 1", con);
-            checkCmd.Parameters.AddWithValue("@id", id);
-            int exists = (int)checkCmd.ExecuteScalar();
-
-            if (exists == 0)
+            try
             {
-                return NotFound(new { message = "Approved Student Not Found" });
+                using SqlConnection con = new SqlConnection(_connectionString);
+                con.Open();
+
+                SqlCommand checkCmd = new SqlCommand("SELECT COUNT(*) FROM Student WHERE StudentId = @id AND IsApproved = 1", con);
+                checkCmd.Parameters.AddWithValue("@id", id);
+                int exists = (int)checkCmd.ExecuteScalar();
+
+                if (exists == 0)
+                    return NotFound(new { message = "Approved Student Not Found" });
+
+                // Attempt to delete student directly
+                SqlCommand deleteCmd = new SqlCommand("DELETE FROM Student WHERE StudentId = @id AND IsApproved = 1", con);
+                deleteCmd.Parameters.AddWithValue("@id", id);
+                deleteCmd.ExecuteNonQuery();
+
+                return Ok(new { message = "Approved Student Deleted Successfully" });
             }
-
-            SqlCommand deleteCmd = new("DELETE FROM Student WHERE StudentId = @id AND IsApproved = 1", con);
-            deleteCmd.Parameters.AddWithValue("@id", id);
-            deleteCmd.ExecuteNonQuery();
-
-            return Ok(new { message = "Approved Student Deleted Successfully" });
+            catch (SqlException ex)
+            {
+                // Check for FK constraint violation error number (SQL Server error 547)
+                if (ex.Number == 547)
+                {
+                    return BadRequest(new { message = "Cannot delete student because they are assigned to a course or assignment." });
+                }
+                return StatusCode(500, new { message = "Internal Server Error", detail = ex.Message });
+            }
         }
+
+
 
         // ------------------ 14. Delete Approved Teacher ------------------
         [HttpDelete("DeleteApprovedTeacher/{id}")]
         [Authorize]
         public IActionResult DeleteApprovedTeacher(int id)
         {
-            using SqlConnection con = new(_connectionString);
-            con.Open();
-
-            SqlCommand checkCmd = new("SELECT COUNT(*) FROM Teacher WHERE TeacherId = @id AND IsApproved = 1", con);
-            checkCmd.Parameters.AddWithValue("@id", id);
-            int exists = (int)checkCmd.ExecuteScalar();
-
-            if (exists == 0)
+            try
             {
-                return NotFound(new { message = "Approved Teacher Not Found" });
+                using SqlConnection con = new(_connectionString);
+                con.Open();
+
+                // Check if teacher exists and approved
+                SqlCommand checkCmd = new("SELECT COUNT(*) FROM Teacher WHERE TeacherId = @id AND IsApproved = 1", con);
+                checkCmd.Parameters.AddWithValue("@id", id);
+                int exists = (int)checkCmd.ExecuteScalar();
+
+                if (exists == 0)
+                {
+                    return NotFound(new { message = "Approved Teacher Not Found" });
+                }
+
+                // Check if teacher assigned to any courses
+                SqlCommand checkCoursesCmd = new SqlCommand("SELECT COUNT(*) FROM Course WHERE TeacherId = @id", con);
+                checkCoursesCmd.Parameters.AddWithValue("@id", id);
+                int assignedCourses = (int)checkCoursesCmd.ExecuteScalar();
+
+                if (assignedCourses > 0)
+                {
+                    return BadRequest(new { message = "Cannot delete teacher: assigned to one or more courses." });
+                }
+
+                // Check if teacher assigned to any assignments (if relevant)
+                SqlCommand checkAssignmentsCmd = new SqlCommand("SELECT COUNT(*) FROM Assignment WHERE TeacherId = @id", con);
+                checkAssignmentsCmd.Parameters.AddWithValue("@id", id);
+                int assignedAssignments = (int)checkAssignmentsCmd.ExecuteScalar();
+
+                if (assignedAssignments > 0)
+                {
+                    return BadRequest(new { message = "Cannot delete teacher: assigned to one or more assignments." });
+                }
+
+                // Delete the teacher
+                SqlCommand deleteCmd = new SqlCommand("DELETE FROM Teacher WHERE TeacherId = @id AND IsApproved = 1", con);
+                deleteCmd.Parameters.AddWithValue("@id", id);
+                deleteCmd.ExecuteNonQuery();
+
+                return Ok(new { message = "Approved Teacher Deleted Successfully" });
             }
-
-            SqlCommand deleteCmd = new("DELETE FROM Teacher WHERE TeacherId = @id AND IsApproved = 1", con);
-            deleteCmd.Parameters.AddWithValue("@id", id);
-            deleteCmd.ExecuteNonQuery();
-
-            return Ok(new { message = "Approved Teacher Deleted Successfully" });
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Cannot delete teacher: assigned to one or more assignments.", detail = ex.Message });
+            }
         }
+
+
 
     }
 }

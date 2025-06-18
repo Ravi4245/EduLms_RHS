@@ -356,6 +356,75 @@ namespace Edu_LMS_Greysoft.Controllers
             return Ok(assignments);
         }
 
+        [HttpPut("UpdateAssignment/{id}")]
+        public IActionResult UpdateAssignment(int id, [FromBody] Assignment updatedAssignment)
+        {
+            if (id != updatedAssignment.AssignmentId)
+                return BadRequest(new { message = "Assignment ID mismatch" });
+
+            try
+            {
+                using SqlConnection con = new(_connectionString);
+                con.Open();
+
+                string query = @"UPDATE Assignment 
+                         SET Title = @Title, 
+                             Description = @Description, 
+                             DueDate = @DueDate, 
+                             UploadFilePath = @UploadFilePath,
+                             CourseId = @CourseId
+                         WHERE AssignmentId = @AssignmentId";
+
+                using SqlCommand cmd = new(query, con);
+                cmd.Parameters.AddWithValue("@Title", updatedAssignment.Title ?? (object)DBNull.Value);
+                cmd.Parameters.AddWithValue("@Description", updatedAssignment.Description ?? (object)DBNull.Value);
+                cmd.Parameters.AddWithValue("@DueDate", updatedAssignment.DueDate);
+                cmd.Parameters.AddWithValue("@UploadFilePath", updatedAssignment.UploadFilePath ?? (object)DBNull.Value);
+                cmd.Parameters.AddWithValue("@CourseId", updatedAssignment.CourseId);
+                cmd.Parameters.AddWithValue("@AssignmentId", updatedAssignment.AssignmentId);
+
+                int rowsAffected = cmd.ExecuteNonQuery();
+
+                if (rowsAffected > 0)
+                    return Ok(new { message = "Assignment updated successfully" });
+                else
+                    return NotFound(new { message = "Assignment not found" });
+            }
+            catch (Exception ex)
+            {
+                // Log exception here as needed
+                return StatusCode(500, new { message = "Error updating assignment", detail = ex.Message });
+            }
+        }
+
+        [HttpDelete("DeleteAssignment/{id}")]
+        public IActionResult DeleteAssignment(int id)
+        {
+            try
+            {
+                using SqlConnection con = new(_connectionString);
+                con.Open();
+
+                string query = "DELETE FROM Assignment WHERE AssignmentId = @AssignmentId";
+
+                using SqlCommand cmd = new(query, con);
+                cmd.Parameters.AddWithValue("@AssignmentId", id);
+
+                int rowsAffected = cmd.ExecuteNonQuery();
+
+                if (rowsAffected > 0)
+                    return Ok(new { message = "Assignment deleted successfully" });
+                else
+                    return NotFound(new { message = "Assignment not found" });
+            }
+            catch (Exception ex)
+            {
+                // Log exception here as needed
+                return StatusCode(500, new { message = "Error deleting assignment", detail = ex.Message });
+            }
+        }
+
+
 
 
         [HttpGet("Submissions/{assignmentId}")]

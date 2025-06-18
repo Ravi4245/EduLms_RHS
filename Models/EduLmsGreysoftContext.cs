@@ -27,6 +27,8 @@ public partial class EduLmsGreysoftContext : DbContext
 
     public virtual DbSet<Enrollment> Enrollments { get; set; }
 
+    public virtual DbSet<Feedback> Feedbacks { get; set; }
+
     public virtual DbSet<PerformanceReport> PerformanceReports { get; set; }
 
     public virtual DbSet<Student> Students { get; set; }
@@ -37,7 +39,7 @@ public partial class EduLmsGreysoftContext : DbContext
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
 #warning To protect potentially sensitive information in your connection string, you should move it out of source code. You can avoid scaffolding the connection string by using the Name= syntax to read it from configuration - see https://go.microsoft.com/fwlink/?linkid=2131148. For more guidance on storing connection strings, see https://go.microsoft.com/fwlink/?LinkId=723263.
-        => optionsBuilder.UseSqlServer("Data Source=DESKTOP-5S4O1AS;Initial Catalog=Edu_Lms_Greysoft;Integrated Security=True;Encrypt=True;Trust Server Certificate=True");
+        => optionsBuilder.UseSqlServer("Data Source=DESKTOP-5S4O1AS;Initial Catalog=Edu_Lms_Greysoft;Integrated Security=True;Encrypt=True;TrustServerCertificate=True");
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -155,6 +157,18 @@ public partial class EduLmsGreysoftContext : DbContext
             entity.HasOne(d => d.Student).WithMany(p => p.Enrollments)
                 .HasForeignKey(d => d.StudentId)
                 .HasConstraintName("FK__Enrollmen__Stude__36B12243");
+        });
+
+        modelBuilder.Entity<Feedback>(entity =>
+        {
+            entity.HasKey(e => e.FeedbackId).HasName("PK__Feedback__6A4BEDD6D174E73F");
+
+            entity.ToTable("Feedback");
+
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("(getdate())")
+                .HasColumnType("datetime");
+            entity.Property(e => e.Email).HasMaxLength(100);
         });
 
         modelBuilder.Entity<PerformanceReport>(entity =>

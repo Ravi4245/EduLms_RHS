@@ -143,32 +143,73 @@ public class StudentController : ControllerBase
             return Ok(new { message = "Enrolled successfully." });
         }
 
-        [HttpGet("MyAssignments/{studentId}")]
-        public IActionResult GetMyAssignments(int studentId)
-        {
-            using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new("sp_GetMyAssignments", con);
-            cmd.CommandType = CommandType.StoredProcedure;
-            cmd.Parameters.AddWithValue("@StudentId", studentId);
-            con.Open();
+    [HttpGet("MyAssignments/{studentId}")]
+    public IActionResult GetMyAssignments(int studentId)
+    {
+        using SqlConnection con = new(_connectionString);
+        SqlCommand cmd = new(@"
+        SELECT a.AssignmentId, a.Title, a.Description, a.UploadFilePath, a.DueDate
+        FROM Assignment a
+        INNER JOIN AssignmentStudent sa ON sa.AssignmentId = a.AssignmentId
+        WHERE sa.StudentId = @sid
+        AND NOT EXISTS (
+            SELECT 1 FROM AssignmentSubmission sub
+            WHERE sub.AssignmentId = a.AssignmentId AND sub.StudentId = @sid
+        )", con);
 
-            using SqlDataReader reader = cmd.ExecuteReader();
-            List<object> assignments = new();
-            while (reader.Read())
+        cmd.Parameters.AddWithValue("@sid", studentId);
+        con.Open();
+
+        using SqlDataReader reader = cmd.ExecuteReader();
+        List<object> assignments = new();
+        while (reader.Read())
+        {
+            assignments.Add(new
             {
-                assignments.Add(new
-                {
-                    AssignmentId = reader["AssignmentId"],
-                    Title = reader["Title"],
-                    Description = reader["Description"],
-                    File = reader["UploadFilePath"],
-                    DueDate = reader["DueDate"]
-                });
-            }
-            return Ok(assignments);
+                AssignmentId = reader["AssignmentId"],
+                Title = reader["Title"],
+                Description = reader["Description"],
+                File = reader["UploadFilePath"],
+                DueDate = reader["DueDate"]
+            });
         }
 
-        [HttpPost("SubmitAssignment")]
+        return Ok(assignments);
+    }
+
+    [HttpGet("MyCourses/{studentId}")]
+    public IActionResult GetMyCourses(int studentId)
+    {
+        using SqlConnection con = new SqlConnection(_connectionString);
+        SqlCommand cmd = new SqlCommand(@"
+        SELECT c.CourseId, c.CourseName, c.Description, c.Category, c.PdfFilePath
+        FROM Course c
+        INNER JOIN StudentCourse sc ON sc.CourseId = c.CourseId
+        WHERE sc.StudentId = @sid", con);
+
+        cmd.Parameters.AddWithValue("@sid", studentId);
+        con.Open();
+
+        List<object> courses = new();
+        using SqlDataReader reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            courses.Add(new
+            {
+                CourseId = reader["CourseId"],
+                CourseName = reader["CourseName"],
+                Description = reader["Description"],
+                Category = reader["Category"],
+                PdfFilePath = reader["PdfFilePath"] != DBNull.Value ? reader["PdfFilePath"].ToString() : null
+            });
+        }
+
+        return Ok(courses);
+    }
+
+
+
+    [HttpPost("SubmitAssignment")]
         public async Task<IActionResult> SubmitAssignment(
             [FromQuery] int assignmentId,
             [FromQuery] int studentId,

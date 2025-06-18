@@ -50,7 +50,10 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 var configuration = builder.Configuration;
 
 
+//builder.Services.AddDbContext<EduLmsGreysoftContext>(options =>
+//    options.UseSqlServer(builder.Configuration.GetConnectionString("YourConnectionString")));
 
+//builder.Services.AddControllers();
 
 var app = builder.Build();
 
