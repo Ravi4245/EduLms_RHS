@@ -1,5 +1,6 @@
 ﻿using EduLms_RHS.Dto;
 using EduLms_RHS.Models;
+
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
@@ -9,7 +10,7 @@ namespace Edu_LMS_Greysoft.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
-    public partial class TeacherController : ControllerBase
+    public class TeacherController : ControllerBase
     {
         private readonly IConfiguration _configuration;
         private readonly EmailService _emailService;
@@ -22,75 +23,162 @@ namespace Edu_LMS_Greysoft.Controllers
             _connectionString = _configuration.GetConnectionString("Lms");
         }
 
-
         [HttpPost("RegisterTeacher")]
-        public IActionResult RegisterTeacher(Teacher teacher)
+        public async Task<IActionResult> RegisterTeacher(RegisterTeacherDto teacher)
         {
-            using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new("sp_RegisterTeacher", con);
-            cmd.CommandType = CommandType.StoredProcedure;
-            cmd.Parameters.AddWithValue("@FullName", teacher.FullName);
-            cmd.Parameters.AddWithValue("@Email", teacher.Email);
-            cmd.Parameters.AddWithValue("@Password", teacher.Password);
-            cmd.Parameters.AddWithValue("@PhoneNumber", teacher.PhoneNumber);
-            cmd.Parameters.AddWithValue("@Qualification", teacher.Qualification);
-            cmd.Parameters.AddWithValue("@ExperienceYears", teacher.ExperienceYears);
-            cmd.Parameters.AddWithValue("@Specialization", teacher.Specialization);
-            cmd.Parameters.AddWithValue("@TeacherNo", teacher.TeacherNo);
-            con.Open();
-            cmd.ExecuteNonQuery();
-            return Ok(new { message = "Teacher Registered" });
+            try
+            {
+                using SqlConnection con = new(_connectionString);
+                con.Open();
+
+                SqlCommand cmd = new(@"
+                    INSERT INTO Teacher (
+                        FullName, Email, Password, PhoneNumber, Qualification,
+                        ExperienceYears, Specialization, TeacherNo, CreatedAt
+                    )
+                    VALUES (
+                        @FullName, @Email, @Password, @PhoneNumber, @Qualification,
+                        @ExperienceYears, @Specialization, @TeacherNo, GETDATE()
+                    )", con);
+
+                cmd.Parameters.AddWithValue("@FullName", teacher.FullName);
+                cmd.Parameters.AddWithValue("@Email", teacher.Email);
+                cmd.Parameters.AddWithValue("@Password", teacher.Password); // ⚠️ Use hashing!
+                cmd.Parameters.AddWithValue("@PhoneNumber", teacher.PhoneNumber);
+                cmd.Parameters.AddWithValue("@Qualification", teacher.Qualification);
+                cmd.Parameters.AddWithValue("@ExperienceYears", teacher.ExperienceYears);
+                cmd.Parameters.AddWithValue("@Specialization", teacher.Specialization);
+                cmd.Parameters.AddWithValue("@TeacherNo", teacher.TeacherNo);
+
+                int rows = cmd.ExecuteNonQuery();
+
+                string subject = "🎉 Registration Received – Awaiting Approval";
+
+                string body = $@"
+                    <p style='font-family:Segoe UI, sans-serif; font-size:14px;'>
+                        Dear <strong>{teacher.FullName}</strong>, 👋
+                    </p>
+                    <p>
+                        We're excited to welcome you to our <strong>Learning Management System (LMS)</strong> community. 📚<br/>
+                        Thank you for registering as a teacher – we truly value your expertise and commitment to education. 🙌
+                    </p>
+                    <p>
+                        Your account has been successfully created and is currently <strong>awaiting admin approval</strong>. 🔐<br/>
+                        You’ll be able to access your dashboard shortly.
+                    </p>
+                    <p>
+                        If you have any questions, feel free to reach out anytime.
+                    </p>
+                    <br/>
+                    <p>
+                        Best regards,<br/> 
+                        <strong>RHS Team</strong> 🎓
+                    </p>";
+
+                await _emailService.SendEmailAsync(teacher.Email, subject, body);
+
+                return Ok(new { message = "✅ Teacher registered successfully. Awaiting admin approval." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new
+                {
+                    message = "❌ Error occurred during teacher registration.",
+                    error = ex.Message,
+                    stackTrace = ex.StackTrace
+                });
+            }
         }
 
-        [HttpGet("GetTeacherProfile/{teacherId}")]
+
+
+
+        [HttpGet("Profile/{teacherId}")]
         public IActionResult GetTeacherProfile(int teacherId)
         {
-            using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new("sp_GetTeacherProfile", con);
-            cmd.CommandType = CommandType.StoredProcedure;
-            cmd.Parameters.AddWithValue("@TeacherId", teacherId);
+            using SqlConnection con = new(_configuration.GetConnectionString("Lms"));
+            SqlCommand cmd = new(@"SELECT FullName, Email, ExperienceYears, Specialization, PhoneNumber 
+                           FROM Teacher 
+                           WHERE TeacherId = @tid", con);
+            cmd.Parameters.AddWithValue("@tid", teacherId);
             con.Open();
-            SqlDataReader reader = cmd.ExecuteReader();
+            using SqlDataReader reader = cmd.ExecuteReader();
             if (reader.Read())
             {
                 var profile = new
                 {
                     FullName = reader["FullName"].ToString(),
                     Email = reader["Email"].ToString(),
-                    ExperienceYears = Convert.ToInt32(reader["ExperienceYears"]),
+                    Experience = Convert.ToInt32(reader["ExperienceYears"]),
                     Specialization = reader["Specialization"].ToString(),
-                    PhoneNumber = reader["PhoneNumber"].ToString()
+                    Phone = reader["PhoneNumber"].ToString()
                 };
                 return Ok(profile);
             }
-            return NotFound();
+            return NotFound(new { message = "Teacher profile not found" });
         }
 
 
         [HttpPost("CreateCourse")]
-        public IActionResult CreateCourse(Course course)
+        public async Task<IActionResult> CreateCourse([FromForm] CourseFormDto dto)
         {
+            if (!ModelState.IsValid)
+            {
+                var errors = ModelState
+                    .Where(ms => ms.Value.Errors.Count > 0)
+                    .Select(ms => new
+                    {
+                        Field = ms.Key,
+                        Messages = ms.Value.Errors.Select(e => e.ErrorMessage).ToArray()
+                    });
+
+                return BadRequest(new { message = "Validation failed", errors });
+            }
+
+            string? filePath = null;
+
+            if (dto.PdfFile != null && dto.PdfFile.Length > 0)
+            {
+                var uploadsFolder = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "CoursePdfs");
+                if (!Directory.Exists(uploadsFolder))
+                    Directory.CreateDirectory(uploadsFolder);
+
+                var uniqueFileName = $"{Guid.NewGuid()}_{dto.PdfFile.FileName}";
+                var fullPath = Path.Combine(uploadsFolder, uniqueFileName);
+
+                using var stream = new FileStream(fullPath, FileMode.Create);
+                await dto.PdfFile.CopyToAsync(stream);
+
+                filePath = $"/CoursePdfs/{uniqueFileName}";
+            }
+
             using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new("sp_CreateCourse", con);
-            cmd.CommandType = CommandType.StoredProcedure;
-            cmd.Parameters.AddWithValue("@CourseName", course.CourseName);
-            cmd.Parameters.AddWithValue("@Description", course.Description);
-            cmd.Parameters.AddWithValue("@Category", course.Category);
-            cmd.Parameters.AddWithValue("@CreatedByTeacherId", course.CreatedByTeacherId);
-            cmd.Parameters.AddWithValue("@PdfFilePath", course.PdfFilePath ?? "");
+            SqlCommand cmd = new("INSERT INTO Course (CourseName, Description, Category, CreatedByTeacherId, PdfFilePath) VALUES (@name, @desc, @cat, @tid, @pdf)", con);
+            cmd.Parameters.AddWithValue("@name", dto.CourseName);
+            cmd.Parameters.AddWithValue("@desc", dto.Description);
+            cmd.Parameters.AddWithValue("@cat", dto.Category);
+            cmd.Parameters.AddWithValue("@tid", dto.CreatedByTeacherId);
+            cmd.Parameters.AddWithValue("@pdf", (object?)filePath ?? DBNull.Value);
+
             con.Open();
             cmd.ExecuteNonQuery();
-            return Ok(new { message = "Course Created" });
+
+            return Ok(new { message = "Course Created with PDF" });
         }
 
-        [HttpGet("GetCoursesByTeacher/{teacherId}")]
+
+
+
+
+
+
+        [HttpGet("MyCourses/{teacherId}")]
         public IActionResult GetCoursesByTeacher(int teacherId)
         {
             List<Course> courses = new();
             using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new("sp_GetCoursesByTeacher", con);
-            cmd.CommandType = CommandType.StoredProcedure;
-            cmd.Parameters.AddWithValue("@TeacherId", teacherId);
+            SqlCommand cmd = new("SELECT * FROM Course WHERE CreatedByTeacherId = @tid", con);
+            cmd.Parameters.AddWithValue("@tid", teacherId);
             con.Open();
             SqlDataReader reader = cmd.ExecuteReader();
             while (reader.Read())
@@ -102,52 +190,95 @@ namespace Edu_LMS_Greysoft.Controllers
                     Description = reader["Description"].ToString(),
                     Category = reader["Category"].ToString(),
                     CreatedByTeacherId = (int)reader["CreatedByTeacherId"],
-                    PdfFilePath = reader["PdfFilePath"].ToString()
+                    PdfFilePath = reader["PdfFilePath"] != DBNull.Value ? reader["PdfFilePath"].ToString() : null
+
                 });
             }
             return Ok(courses);
         }
 
+
+
         [HttpPut("UpdateCourse")]
         public IActionResult UpdateCourse(Course course)
         {
             using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new("sp_UpdateCourse", con);
-            cmd.CommandType = CommandType.StoredProcedure;
-            cmd.Parameters.AddWithValue("@CourseId", course.CourseId);
-            cmd.Parameters.AddWithValue("@CreatedByTeacherId", course.CreatedByTeacherId);
-            cmd.Parameters.AddWithValue("@CourseName", course.CourseName);
-            cmd.Parameters.AddWithValue("@Description", course.Description);
-            cmd.Parameters.AddWithValue("@Category", course.Category);
+            SqlCommand cmd = new("UPDATE Course SET CourseName = @name, Description = @desc, Category = @cat WHERE CourseId = @cid AND CreatedByTeacherId = @tid", con);
+            cmd.Parameters.AddWithValue("@name", course.CourseName);
+            cmd.Parameters.AddWithValue("@desc", course.Description);
+            cmd.Parameters.AddWithValue("@cat", course.Category);
+            cmd.Parameters.AddWithValue("@cid", course.CourseId);
+            cmd.Parameters.AddWithValue("@tid", course.CreatedByTeacherId);
             con.Open();
             int rows = cmd.ExecuteNonQuery();
-            return Ok(new { message = rows > 0 ? "Course Updated" : "Course Not Found" });
+            return Ok(new { message = "Course Updated" });
         }
 
         [HttpPost("AssignCourseToStudent")]
-        public IActionResult AssignCourseToStudent(int studentId, int courseId)
+        public async Task<IActionResult> AssignCourseToStudent(int studentId, int courseId)
         {
-            using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new("sp_AssignCourseToStudent", con);
-            cmd.CommandType = CommandType.StoredProcedure;
-            cmd.Parameters.AddWithValue("@StudentId", studentId);
-            cmd.Parameters.AddWithValue("@CourseId", courseId);
-            con.Open();
-            cmd.ExecuteNonQuery();
-            return Ok(new { message = "Course Assigned to Student" });
+            try
+            {
+                using SqlConnection con = new(_connectionString);
+                con.Open();
+
+                // Insert assignment
+                SqlCommand insertCmd = new("INSERT INTO StudentCourse (StudentId, CourseId) VALUES (@sid, @cid)", con);
+                insertCmd.Parameters.AddWithValue("@sid", studentId);
+                insertCmd.Parameters.AddWithValue("@cid", courseId);
+                insertCmd.ExecuteNonQuery();
+
+                // Get student details
+                SqlCommand studentCmd = new("SELECT FullName, Email FROM Student WHERE StudentId = @sid", con);
+                studentCmd.Parameters.AddWithValue("@sid", studentId);
+                var reader = studentCmd.ExecuteReader();
+
+                if (!reader.Read())
+                {
+                    return NotFound(new { message = "Student not found." });
+                }
+
+                string studentName = reader["FullName"].ToString();
+                string studentEmail = reader["Email"].ToString();
+                reader.Close();
+
+                // Get course name
+                SqlCommand courseCmd = new("SELECT CourseName FROM Course WHERE CourseId = @cid", con);
+                courseCmd.Parameters.AddWithValue("@cid", courseId);
+                string courseName = courseCmd.ExecuteScalar()?.ToString() ?? "your course";
+
+                // Compose email content
+                string subject = "📚 New Course Assigned to You!";
+                string body = $@"
+            <p>Dear <strong>{studentName}</strong>,</p>
+            <p>You have been assigned a new course: <strong>{courseName}</strong>.</p>
+            <p>Please log in to your dashboard to start learning.</p>
+            <br/>
+            <p>Best regards,<br/>EduLMS Team 🎓</p>";
+
+                // Send email
+                await _emailService.SendEmailAsync(studentEmail, subject, body);
+
+                return Ok(new { message = "Course assigned to student successfully and email sent." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error occurred while assigning course.", error = ex.Message });
+            }
         }
 
-        [HttpDelete("DeleteCourse")]
+
+
+        [HttpDelete("DeleteCourse/{courseId}/{teacherId}")]
         public IActionResult DeleteCourse(int courseId, int teacherId)
         {
             using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new("sp_DeleteCourse", con);
-            cmd.CommandType = CommandType.StoredProcedure;
-            cmd.Parameters.AddWithValue("@CourseId", courseId);
-            cmd.Parameters.AddWithValue("@TeacherId", teacherId);
+            SqlCommand cmd = new("DELETE FROM Course WHERE CourseId = @cid AND CreatedByTeacherId = @tid", con);
+            cmd.Parameters.AddWithValue("@cid", courseId);
+            cmd.Parameters.AddWithValue("@tid", teacherId);
             con.Open();
             int rows = cmd.ExecuteNonQuery();
-            return Ok(new { message = rows > 0 ? "Course Deleted" : "Course Not Found or Unauthorized" });
+            return Ok(new { message = "Course Deleted" });
         }
 
 
@@ -172,28 +303,28 @@ namespace Edu_LMS_Greysoft.Controllers
             }
 
             using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new("sp_CreateAssignment", con);
-            cmd.CommandType = CommandType.StoredProcedure;
-            cmd.Parameters.AddWithValue("@CourseId", assignment.CourseId);
-            cmd.Parameters.AddWithValue("@TeacherId", assignment.TeacherId);
-            cmd.Parameters.AddWithValue("@Title", assignment.Title);
-            cmd.Parameters.AddWithValue("@Description", assignment.Description);
-            cmd.Parameters.AddWithValue("@UploadFilePath", assignment.UploadFilePath ?? string.Empty);
-            cmd.Parameters.AddWithValue("@DueDate", assignment.DueDate);
+            SqlCommand cmd = new("INSERT INTO Assignment (CourseId, TeacherId, Title, Description, UploadFilePath, DueDate) VALUES (@cid, @tid, @title, @desc, @file, @due)", con);
+            cmd.Parameters.AddWithValue("@cid", assignment.CourseId);
+            cmd.Parameters.AddWithValue("@tid", assignment.TeacherId);
+            cmd.Parameters.AddWithValue("@title", assignment.Title);
+            cmd.Parameters.AddWithValue("@desc", assignment.Description);
+            cmd.Parameters.AddWithValue("@file", assignment.UploadFilePath ?? string.Empty);
+            cmd.Parameters.AddWithValue("@due", assignment.DueDate);
             con.Open();
             cmd.ExecuteNonQuery();
 
             return Ok(new { message = "Assignment Created with PDF file" });
         }
 
+
+
         [HttpPost("AssignAssignmentToStudent")]
         public IActionResult AssignAssignmentToStudent(int assignmentId, int studentId)
         {
             using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new("sp_AssignAssignmentToStudent", con);
-            cmd.CommandType = CommandType.StoredProcedure;
-            cmd.Parameters.AddWithValue("@AssignmentId", assignmentId);
-            cmd.Parameters.AddWithValue("@StudentId", studentId);
+            SqlCommand cmd = new("INSERT INTO AssignmentStudent (AssignmentId, StudentId) VALUES (@aid, @sid)", con);
+            cmd.Parameters.AddWithValue("@aid", assignmentId);
+            cmd.Parameters.AddWithValue("@sid", studentId);
             con.Open();
             cmd.ExecuteNonQuery();
             return Ok(new { message = "Assignment assigned to student successfully" });
@@ -204,9 +335,8 @@ namespace Edu_LMS_Greysoft.Controllers
         {
             List<Assignment> assignments = new();
             using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new("sp_GetAssignmentsByTeacher", con);
-            cmd.CommandType = CommandType.StoredProcedure;
-            cmd.Parameters.AddWithValue("@TeacherId", teacherId);
+            SqlCommand cmd = new("SELECT * FROM Assignment WHERE TeacherId = @tid", con);
+            cmd.Parameters.AddWithValue("@tid", teacherId);
             con.Open();
             SqlDataReader reader = cmd.ExecuteReader();
             while (reader.Read())
@@ -235,16 +365,24 @@ namespace Edu_LMS_Greysoft.Controllers
             try
             {
                 using SqlConnection con = new(_connectionString);
-                SqlCommand cmd = new("sp_UpdateAssignment", con);
-                cmd.CommandType = CommandType.StoredProcedure;
-                cmd.Parameters.AddWithValue("@AssignmentId", updatedAssignment.AssignmentId);
+                con.Open();
+
+                string query = @"UPDATE Assignment 
+                         SET Title = @Title, 
+                             Description = @Description, 
+                             DueDate = @DueDate, 
+                             UploadFilePath = @UploadFilePath,
+                             CourseId = @CourseId
+                         WHERE AssignmentId = @AssignmentId";
+
+                using SqlCommand cmd = new(query, con);
                 cmd.Parameters.AddWithValue("@Title", updatedAssignment.Title ?? (object)DBNull.Value);
                 cmd.Parameters.AddWithValue("@Description", updatedAssignment.Description ?? (object)DBNull.Value);
                 cmd.Parameters.AddWithValue("@DueDate", updatedAssignment.DueDate);
                 cmd.Parameters.AddWithValue("@UploadFilePath", updatedAssignment.UploadFilePath ?? (object)DBNull.Value);
                 cmd.Parameters.AddWithValue("@CourseId", updatedAssignment.CourseId);
+                cmd.Parameters.AddWithValue("@AssignmentId", updatedAssignment.AssignmentId);
 
-                con.Open();
                 int rowsAffected = cmd.ExecuteNonQuery();
 
                 if (rowsAffected > 0)
@@ -254,6 +392,7 @@ namespace Edu_LMS_Greysoft.Controllers
             }
             catch (Exception ex)
             {
+                // Log exception here as needed
                 return StatusCode(500, new { message = "Error updating assignment", detail = ex.Message });
             }
         }
@@ -264,10 +403,12 @@ namespace Edu_LMS_Greysoft.Controllers
             try
             {
                 using SqlConnection con = new(_connectionString);
-                SqlCommand cmd = new("sp_DeleteAssignment", con);
-                cmd.CommandType = CommandType.StoredProcedure;
-                cmd.Parameters.AddWithValue("@AssignmentId", id);
                 con.Open();
+
+                string query = "DELETE FROM Assignment WHERE AssignmentId = @AssignmentId";
+
+                using SqlCommand cmd = new(query, con);
+                cmd.Parameters.AddWithValue("@AssignmentId", id);
 
                 int rowsAffected = cmd.ExecuteNonQuery();
 
@@ -278,19 +419,21 @@ namespace Edu_LMS_Greysoft.Controllers
             }
             catch (Exception ex)
             {
+                // Log exception here as needed
                 return StatusCode(500, new { message = "Error deleting assignment", detail = ex.Message });
             }
         }
 
 
-        [HttpGet("GetSubmissions/{assignmentId}")]
+
+
+        [HttpGet("Submissions/{assignmentId}")]
         public IActionResult GetSubmissions(int assignmentId)
         {
             List<AssignmentSubmission> submissions = new();
             using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new("sp_GetSubmissionsByAssignmentId", con);
-            cmd.CommandType = CommandType.StoredProcedure;
-            cmd.Parameters.AddWithValue("@AssignmentId", assignmentId);
+            SqlCommand cmd = new("SELECT * FROM AssignmentSubmission WHERE AssignmentId = @aid", con);
+            cmd.Parameters.AddWithValue("@aid", assignmentId);
             con.Open();
             SqlDataReader reader = cmd.ExecuteReader();
             while (reader.Read())
@@ -314,11 +457,10 @@ namespace Edu_LMS_Greysoft.Controllers
         public IActionResult GradeSubmission(AssignmentSubmission submission)
         {
             using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new("sp_GradeAssignmentSubmission", con);
-            cmd.CommandType = CommandType.StoredProcedure;
-            cmd.Parameters.AddWithValue("@SubmissionId", submission.SubmissionId);
-            cmd.Parameters.AddWithValue("@Grade", submission.Grade);
-            cmd.Parameters.AddWithValue("@Feedback", submission.Feedback ?? "");
+            SqlCommand cmd = new("UPDATE AssignmentSubmission SET Grade = @grade, Feedback = @fb WHERE SubmissionId = @sid", con);
+            cmd.Parameters.AddWithValue("@grade", submission.Grade);
+            cmd.Parameters.AddWithValue("@fb", submission.Feedback ?? "");
+            cmd.Parameters.AddWithValue("@sid", submission.SubmissionId);
             con.Open();
             int rows = cmd.ExecuteNonQuery();
             return Ok(new { message = rows > 0 ? "Graded Successfully" : "Submission Not Found" });
@@ -329,43 +471,41 @@ namespace Edu_LMS_Greysoft.Controllers
         public IActionResult CreatePerformance(PerformanceReport report)
         {
             using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new("sp_CreatePerformanceReport", con);
-            cmd.CommandType = CommandType.StoredProcedure;
-            cmd.Parameters.AddWithValue("@StudentId", report.StudentId);
-            cmd.Parameters.AddWithValue("@CourseId", report.CourseId);
-            cmd.Parameters.AddWithValue("@AverageGrade", report.AverageGrade);
-            cmd.Parameters.AddWithValue("@Remarks", report.Remarks ?? "");
+            SqlCommand cmd = new("INSERT INTO PerformanceReport (StudentId, CourseId, AverageGrade, Remarks) VALUES (@sid, @cid, @grade, @remarks)", con);
+            cmd.Parameters.AddWithValue("@sid", report.StudentId);
+            cmd.Parameters.AddWithValue("@cid", report.CourseId);
+            cmd.Parameters.AddWithValue("@grade", report.AverageGrade);
+            cmd.Parameters.AddWithValue("@remarks", report.Remarks ?? "");
             con.Open();
             cmd.ExecuteNonQuery();
             return Ok(new { message = "Report Created" });
         }
 
-        [HttpPut("UpdatePerformance")]
-        public IActionResult UpdatePerformance(PerformanceReport report)
-        {
-            using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new("sp_UpdatePerformanceReport", con);
-            cmd.CommandType = CommandType.StoredProcedure;
-            cmd.Parameters.AddWithValue("@ReportId", report.ReportId);
-            cmd.Parameters.AddWithValue("@AverageGrade", report.AverageGrade);
-            cmd.Parameters.AddWithValue("@Remarks", report.Remarks ?? "");
-            con.Open();
-            int rows = cmd.ExecuteNonQuery();
-            return Ok(new { message = rows > 0 ? "Report Updated" : "Report Not Found" });
-        }
-
-
 
         [HttpGet("SubmittedAssignments/{teacherId}")]
         public IActionResult GetSubmittedAssignments(int teacherId)
         {
-            List<object> submissions = new();
-            using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new("sp_GetSubmittedAssignmentsByTeacher", con);
-            cmd.CommandType = CommandType.StoredProcedure;
-            cmd.Parameters.AddWithValue("@TeacherId", teacherId);
+            using SqlConnection con = new(_configuration.GetConnectionString("Lms"));
+            SqlCommand cmd = new(@"
+        SELECT 
+            s.SubmissionId,
+            st.FullName AS StudentName,
+            a.Title AS AssignmentTitle,
+            s.SubmittedFilePath,
+            s.SubmittedDate,
+            s.Grade,
+            s.Feedback
+        FROM AssignmentSubmission s
+        INNER JOIN Assignment a ON s.AssignmentId = a.AssignmentId
+        INNER JOIN Student st ON s.StudentId = st.StudentId
+        WHERE a.TeacherId = @tid", con);
+
+            cmd.Parameters.AddWithValue("@tid", teacherId);
+
             con.Open();
             using SqlDataReader reader = cmd.ExecuteReader();
+            List<object> submissions = new();
+
             while (reader.Read())
             {
                 submissions.Add(new
@@ -379,16 +519,25 @@ namespace Edu_LMS_Greysoft.Controllers
                     Feedback = reader["Feedback"]?.ToString()
                 });
             }
+
             return Ok(submissions);
         }
+
 
         [HttpGet("ApprovedStudents")]
         public IActionResult GetApprovedStudents()
         {
             List<object> approvedStudents = new();
+
             using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new("sp_GetApprovedStudents", con);
-            cmd.CommandType = CommandType.StoredProcedure;
+            SqlCommand cmd = new(@"
+        SELECT 
+            StudentId,
+            FullName AS StudentName,
+            Email
+        FROM Student
+        WHERE IsApproved = 1", con);
+
             con.Open();
             using SqlDataReader reader = cmd.ExecuteReader();
             while (reader.Read())
@@ -400,7 +549,27 @@ namespace Edu_LMS_Greysoft.Controllers
                     Email = reader["Email"].ToString()
                 });
             }
+
             return Ok(approvedStudents);
+        }
+
+
+
+
+
+
+
+        [HttpPut("UpdatePerformance")]
+        public IActionResult UpdatePerformance(PerformanceReport report)
+        {
+            using SqlConnection con = new(_connectionString);
+            SqlCommand cmd = new("UPDATE PerformanceReport SET AverageGrade = @grade, Remarks = @remarks WHERE ReportId = @rid", con);
+            cmd.Parameters.AddWithValue("@grade", report.AverageGrade);
+            cmd.Parameters.AddWithValue("@remarks", report.Remarks ?? "");
+            cmd.Parameters.AddWithValue("@rid", report.ReportId);
+            con.Open();
+            int rows = cmd.ExecuteNonQuery();
+            return Ok(new { message = rows > 0 ? "Report Updated" : "Report Not Found" });
         }
 
         [HttpGet("StudentAssignments/{studentId}")]
@@ -408,9 +577,14 @@ namespace Edu_LMS_Greysoft.Controllers
         {
             List<object> assignments = new();
             using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new("sp_GetStudentAssignments", con);
-            cmd.CommandType = CommandType.StoredProcedure;
-            cmd.Parameters.AddWithValue("@StudentId", studentId);
+            SqlCommand cmd = new(@"
+        SELECT A.AssignmentId, A.Title, A.Description, A.UploadFilePath, A.DueDate, C.CourseName
+        FROM AssignmentStudent AS ASI
+        JOIN Assignment AS A ON A.AssignmentId = ASI.AssignmentId
+        JOIN Course AS C ON A.CourseId = C.CourseId
+        WHERE ASI.StudentId = @sid", con);
+
+            cmd.Parameters.AddWithValue("@sid", studentId);
             con.Open();
             using SqlDataReader reader = cmd.ExecuteReader();
             while (reader.Read())
@@ -428,14 +602,26 @@ namespace Edu_LMS_Greysoft.Controllers
             return Ok(assignments);
         }
 
+
+
+
         [HttpGet("AssignedStudentsByCourse/{courseId}")]
         public IActionResult GetAssignedStudentsByCourse(int courseId)
         {
             List<object> assignedStudents = new();
+
             using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new("sp_GetAssignedStudentsByCourse", con);
-            cmd.CommandType = CommandType.StoredProcedure;
+            SqlCommand cmd = new(@"
+            SELECT 
+                s.StudentId,
+                s.FullName AS StudentName,
+                s.Email
+            FROM StudentCourse sc
+            INNER JOIN Student s ON sc.StudentId = s.StudentId
+            WHERE sc.CourseId = @CourseId", con);
+
             cmd.Parameters.AddWithValue("@CourseId", courseId);
+
             con.Open();
             using SqlDataReader reader = cmd.ExecuteReader();
             while (reader.Read())
@@ -447,17 +633,28 @@ namespace Edu_LMS_Greysoft.Controllers
                     Email = reader["Email"].ToString()
                 });
             }
+
             return Ok(assignedStudents);
         }
+
 
         [HttpGet("AssignedStudentsByAssignment/{assignmentId}")]
         public IActionResult GetAssignedStudentsByAssignment(int assignmentId)
         {
             List<object> assignedStudents = new();
+
             using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new("sp_GetAssignedStudentsByAssignment", con);
-            cmd.CommandType = CommandType.StoredProcedure;
+            SqlCommand cmd = new(@"
+            SELECT 
+                s.StudentId,
+                s.FullName AS StudentName,
+                s.Email
+            FROM AssignmentStudent ast
+            INNER JOIN Student s ON ast.StudentId = s.StudentId
+            WHERE ast.AssignmentId = @AssignmentId", con);
+
             cmd.Parameters.AddWithValue("@AssignmentId", assignmentId);
+
             con.Open();
             using SqlDataReader reader = cmd.ExecuteReader();
             while (reader.Read())
@@ -469,31 +666,48 @@ namespace Edu_LMS_Greysoft.Controllers
                     Email = reader["Email"].ToString()
                 });
             }
+
             return Ok(assignedStudents);
         }
+
 
         [HttpPost("AssignAssignmentToStudentByName")]
         public IActionResult AssignAssignmentToStudentByName(string studentName, string assignmentTitle)
         {
             using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new("sp_AssignAssignmentToStudentByName", con);
-            cmd.CommandType = CommandType.StoredProcedure;
-            cmd.Parameters.AddWithValue("@StudentName", studentName);
-            cmd.Parameters.AddWithValue("@AssignmentTitle", assignmentTitle);
+
+            // Step 1: Get StudentId
+            SqlCommand getStudentIdCmd = new("SELECT StudentId FROM Student WHERE FullName = @name", con);
+            getStudentIdCmd.Parameters.AddWithValue("@name", studentName);
+
+            // Step 2: Get AssignmentId
+            SqlCommand getAssignmentIdCmd = new("SELECT AssignmentId FROM Assignment WHERE Title = @title", con);
+            getAssignmentIdCmd.Parameters.AddWithValue("@title", assignmentTitle);
+
             con.Open();
-            int rows = cmd.ExecuteNonQuery();
-            return Ok(new { message = rows > 0 ? "✅ Assignment assigned to student successfully using names." : "❌ Student or Assignment not found." });
+
+            int? studentId = (int?)getStudentIdCmd.ExecuteScalar();
+            int? assignmentId = (int?)getAssignmentIdCmd.ExecuteScalar();
+
+            if (studentId == null || assignmentId == null)
+            {
+                return BadRequest("❌ Student or Assignment not found.");
+            }
+
+            // Step 3: Insert into AssignmentStudent
+            SqlCommand insertCmd = new(@"
+        INSERT INTO AssignmentStudent (AssignmentId, StudentId, AssignedDate) 
+        VALUES (@aid, @sid, @assignedDate)", con);
+
+            insertCmd.Parameters.AddWithValue("@aid", assignmentId.Value);
+            insertCmd.Parameters.AddWithValue("@sid", studentId.Value);
+            insertCmd.Parameters.AddWithValue("@assignedDate", DateTime.Now);
+
+            insertCmd.ExecuteNonQuery();
+
+            return Ok(new { message = "✅ Assignment assigned to student successfully using names." });
         }
+
+
     }
 }
-
-
-
-
-
-
-      
-
-
-      
-       
