@@ -99,7 +99,8 @@ public class LoginController : ControllerBase
                 }
                 else
                 {
-                    return Unauthorized("Teacher not approved by admin.");
+                    return Unauthorized(new { message = "Teacher not approved by admin." });
+
                 }
             }
         }
@@ -129,11 +130,11 @@ public class LoginController : ControllerBase
                 }
                 else
                 {
-                    return Unauthorized("Student not approved by admin.");
+                    return Unauthorized(new { message = "Student not approved by admin." });
                 }
             }
         }
 
-        return Unauthorized("Invalid email or password.");
+        return Unauthorized(new { message = "Invalid email or password." });
     }
 }

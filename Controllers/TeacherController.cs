@@ -602,5 +602,112 @@ namespace Edu_LMS_Greysoft.Controllers
             return Ok(assignments);
         }
 
+
+
+
+        [HttpGet("AssignedStudentsByCourse/{courseId}")]
+        public IActionResult GetAssignedStudentsByCourse(int courseId)
+        {
+            List<object> assignedStudents = new();
+
+            using SqlConnection con = new(_connectionString);
+            SqlCommand cmd = new(@"
+            SELECT 
+                s.StudentId,
+                s.FullName AS StudentName,
+                s.Email
+            FROM StudentCourse sc
+            INNER JOIN Student s ON sc.StudentId = s.StudentId
+            WHERE sc.CourseId = @CourseId", con);
+
+            cmd.Parameters.AddWithValue("@CourseId", courseId);
+
+            con.Open();
+            using SqlDataReader reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                assignedStudents.Add(new
+                {
+                    StudentId = reader["StudentId"],
+                    StudentName = reader["StudentName"].ToString(),
+                    Email = reader["Email"].ToString()
+                });
+            }
+
+            return Ok(assignedStudents);
+        }
+
+
+        [HttpGet("AssignedStudentsByAssignment/{assignmentId}")]
+        public IActionResult GetAssignedStudentsByAssignment(int assignmentId)
+        {
+            List<object> assignedStudents = new();
+
+            using SqlConnection con = new(_connectionString);
+            SqlCommand cmd = new(@"
+            SELECT 
+                s.StudentId,
+                s.FullName AS StudentName,
+                s.Email
+            FROM AssignmentStudent ast
+            INNER JOIN Student s ON ast.StudentId = s.StudentId
+            WHERE ast.AssignmentId = @AssignmentId", con);
+
+            cmd.Parameters.AddWithValue("@AssignmentId", assignmentId);
+
+            con.Open();
+            using SqlDataReader reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                assignedStudents.Add(new
+                {
+                    StudentId = reader["StudentId"],
+                    StudentName = reader["StudentName"].ToString(),
+                    Email = reader["Email"].ToString()
+                });
+            }
+
+            return Ok(assignedStudents);
+        }
+
+
+        [HttpPost("AssignAssignmentToStudentByName")]
+        public IActionResult AssignAssignmentToStudentByName(string studentName, string assignmentTitle)
+        {
+            using SqlConnection con = new(_connectionString);
+
+            // Step 1: Get StudentId
+            SqlCommand getStudentIdCmd = new("SELECT StudentId FROM Student WHERE FullName = @name", con);
+            getStudentIdCmd.Parameters.AddWithValue("@name", studentName);
+
+            // Step 2: Get AssignmentId
+            SqlCommand getAssignmentIdCmd = new("SELECT AssignmentId FROM Assignment WHERE Title = @title", con);
+            getAssignmentIdCmd.Parameters.AddWithValue("@title", assignmentTitle);
+
+            con.Open();
+
+            int? studentId = (int?)getStudentIdCmd.ExecuteScalar();
+            int? assignmentId = (int?)getAssignmentIdCmd.ExecuteScalar();
+
+            if (studentId == null || assignmentId == null)
+            {
+                return BadRequest("❌ Student or Assignment not found.");
+            }
+
+            // Step 3: Insert into AssignmentStudent
+            SqlCommand insertCmd = new(@"
+        INSERT INTO AssignmentStudent (AssignmentId, StudentId, AssignedDate) 
+        VALUES (@aid, @sid, @assignedDate)", con);
+
+            insertCmd.Parameters.AddWithValue("@aid", assignmentId.Value);
+            insertCmd.Parameters.AddWithValue("@sid", studentId.Value);
+            insertCmd.Parameters.AddWithValue("@assignedDate", DateTime.Now);
+
+            insertCmd.ExecuteNonQuery();
+
+            return Ok(new { message = "✅ Assignment assigned to student successfully using names." });
+        }
+
+
     }
 }
