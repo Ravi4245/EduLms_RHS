@@ -10,589 +10,295 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Edu_LMS_Greysoft.Controllers
 {
-    [Route("api/[controller]")]
     [ApiController]
-   
+    [Route("api/[controller]")]
     public class AdminController : ControllerBase
     {
-        private readonly IConfiguration _configuration;
-        private readonly string _connectionString;
+        private readonly IConfiguration _config;
+        private readonly string _connStr;
         private readonly EmailService _emailService;
-        private readonly EduLmsGreysoftContext _context;  // Declare _context here
 
-        public AdminController(IConfiguration configuration, EmailService emailService,EduLmsGreysoftContext context)
+        public AdminController(IConfiguration config, EmailService emailService)
         {
-            _configuration = configuration;
+            _config = config;
+            _connStr = _config.GetConnectionString("Lms");
             _emailService = emailService;
-            _connectionString = _configuration.GetConnectionString("Lms");
-            _context = context;
         }
 
-
-        // ------------------ 1. View Pending Students ------------------
-        [HttpGet("PendingStudents")]
-        [Authorize]
+        [HttpGet("PendingStudents"), Authorize]
         public IActionResult GetPendingStudents()
         {
-            List<Student> students = new();
-            using SqlConnection con = new(_connectionString);
+            using var con = new SqlConnection(_connStr);
+            using var cmd = new SqlCommand("sp_GetPendingStudents", con) { CommandType = CommandType.StoredProcedure };
             con.Open();
-            SqlCommand cmd = new("SELECT * FROM Student WHERE IsApproved = 0", con);
-            SqlDataReader reader = cmd.ExecuteReader();
-            while (reader.Read())
-            {
-                students.Add(new Student
+            var list = new List<Student>();
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+                list.Add(new Student
                 {
-                    StudentId = (int)reader["StudentId"],
-                    FullName = reader["FullName"].ToString(),
-                    Email = reader["Email"].ToString(),
-                    PhoneNumber = reader["PhoneNumber"].ToString()
+                    StudentId = (int)rdr["StudentId"],
+                    FullName = rdr["FullName"].ToString(),
+                    Email = rdr["Email"].ToString(),
+                    PhoneNumber = rdr["PhoneNumber"].ToString()
                 });
-            }
-            return Ok(students);
+            return Ok(list);
         }
 
-        // ------------------ 2. View Approved Students ------------------
-        [HttpGet("ApprovedStudents")]
-        [Authorize]
+        [HttpGet("ApprovedStudents"), Authorize]
         public IActionResult GetApprovedStudents()
         {
-            List<Student> students = new();
-            using SqlConnection con = new(_connectionString);
+            using var con = new SqlConnection(_connStr);
+            using var cmd = new SqlCommand("sp_GetApprovedStudentsa", con) { CommandType = CommandType.StoredProcedure };
             con.Open();
-            SqlCommand cmd = new("SELECT * FROM Student WHERE IsApproved = 1", con);
-            SqlDataReader reader = cmd.ExecuteReader();
-            while (reader.Read())
-            {
-                students.Add(new Student
+            var list = new List<Student>();
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+                list.Add(new Student
                 {
-                    StudentId = (int)reader["StudentId"],
-                    FullName = reader["FullName"].ToString(),
-                    Email = reader["Email"].ToString(),
-                    PhoneNumber = reader["PhoneNumber"].ToString()
+                    StudentId = (int)rdr["StudentId"],
+                    FullName = rdr["FullName"].ToString(),
+                    Email = rdr["Email"].ToString(),
+                    PhoneNumber = rdr["PhoneNumber"].ToString()
                 });
-            }
-            return Ok(students);
+            return Ok(list);
         }
 
-        // ------------------ 3. Approve Student ------------------
-        [HttpPut("ApproveStudent/{id}")]
-        [Authorize]
+        [HttpPut("ApproveStudent/{id}"), Authorize]
         public async Task<IActionResult> ApproveStudent(int id)
         {
-            try
-            {
-                using SqlConnection con = new(_connectionString);
-                con.Open();
+            using var con = new SqlConnection(_connStr);
+            con.Open();
+            using var getCmd = new SqlCommand("SELECT FullName, Email FROM Student WHERE StudentId = @Id", con);
+            getCmd.Parameters.AddWithValue("@Id", id);
+            using var rdr = getCmd.ExecuteReader();
+            if (!rdr.Read())
+                return NotFound(new { message = "❌ Student not found." });
+            var fullName = rdr["FullName"].ToString();
+            var email = rdr["Email"].ToString();
+            rdr.Close();
 
-                // Get student details for email
-                SqlCommand getCmd = new("SELECT FullName, Email FROM Student WHERE StudentId = @id", con);
-                getCmd.Parameters.AddWithValue("@id", id);
-                SqlDataReader reader = getCmd.ExecuteReader();
+            using var cmd = new SqlCommand("sp_ApproveStudent", con) { CommandType = CommandType.StoredProcedure };
+            cmd.Parameters.AddWithValue("@Id", id);
+            int affected = (int)cmd.ExecuteScalar();
+            if (affected == 0)
+                return BadRequest(new { message = "❌ Approval failed." });
 
-                if (!reader.Read())
-                {
-                    return NotFound(new { message = "❌ Student not found." });
-                }
+            string subject = "✅ Your Student Account Has Been Approved!";
+            string body = $"<p>Dear <strong>{fullName}</strong>, your student account is now approved.</p>";
+            await _emailService.SendEmailAsync(email, subject, body);
 
-                string fullName = reader["FullName"].ToString();
-                string email = reader["Email"].ToString();
-                reader.Close();
-
-                // Update approval status
-                SqlCommand updateCmd = new("UPDATE Student SET IsApproved = 1 WHERE StudentId = @id", con);
-                updateCmd.Parameters.AddWithValue("@id", id);
-                int rowsAffected = updateCmd.ExecuteNonQuery();
-
-                if (rowsAffected == 0)
-                {
-                    return BadRequest(new { message = "❌ Failed to approve student." });
-                }
-
-                // Send approval email
-                string subject = "✅ Your Student Account Has Been Approved!";
-                string body = $@"
-            <p style='font-family:Segoe UI, sans-serif; font-size:14px;'>
-                Dear <strong>{fullName}</strong>,
-            </p>
-            <p>
-                Congratulations! Your account on our <strong>Learning Management System (LMS)</strong> has been approved by the admin. 🎉
-            </p>
-            <p>
-                You can now log in and start accessing your courses and learning materials.
-            </p>
-            <br/>
-            <p>
-                Best regards,<br/>
-                <strong>RHS Team</strong> 🎓
-            </p>";
-
-                await _emailService.SendEmailAsync(email, subject, body);
-
-                return Ok(new { message = "✅ Student approved and email notification sent." });
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new
-                {
-                    message = "❌ Error occurred while approving student.",
-                    error = ex.Message
-                });
-            }
+            return Ok(new { message = "✅ Approved & notified." });
         }
 
-
-        // ------------------ 4. Reject Student ------------------
-        [HttpDelete("RejectStudent/{id}")]
-        [Authorize]
+        [HttpDelete("RejectStudent/{id}"), Authorize]
         public async Task<IActionResult> RejectStudent(int id)
         {
-            try
-            {
-                using SqlConnection con = new(_connectionString);
-                con.Open();
+            using var con = new SqlConnection(_connStr);
+            con.Open();
+            using var getCmd = new SqlCommand("SELECT FullName, Email FROM Student WHERE StudentId = @Id AND IsApproved = 0", con);
+            getCmd.Parameters.AddWithValue("@Id", id);
+            using var rdr = getCmd.ExecuteReader();
+            if (!rdr.Read())
+                return NotFound(new { message = "❌ Not found or already approved." });
+            var fullName = rdr["FullName"].ToString();
+            var email = rdr["Email"].ToString();
+            rdr.Close();
 
-                // Step 1: Get student details for email before deleting
-                SqlCommand getCmd = new("SELECT FullName, Email FROM Student WHERE StudentId = @id AND IsApproved = 0", con);
-                getCmd.Parameters.AddWithValue("@id", id);
-                SqlDataReader reader = getCmd.ExecuteReader();
+            using var cmd = new SqlCommand("sp_RejectStudent", con) { CommandType = CommandType.StoredProcedure };
+            cmd.Parameters.AddWithValue("@Id", id);
+            int affected = (int)cmd.ExecuteScalar();
+            if (affected == 0)
+                return BadRequest(new { message = "❌ Delete failed." });
 
-                if (!reader.Read())
-                {
-                    return NotFound(new { message = "❌ Student not found or already approved." });
-                }
+            string subject = "❌ Your Student Registration Was Rejected";
+            string body = $"<p>Dear <strong>{fullName}</strong>, we regret to inform you that your registration was rejected.</p>";
+            await _emailService.SendEmailAsync(email, subject, body);
 
-                string fullName = reader["FullName"].ToString();
-                string email = reader["Email"].ToString();
-                reader.Close();
-
-                // Step 2: Delete the student
-                SqlCommand deleteCmd = new("DELETE FROM Student WHERE StudentId = @id AND IsApproved = 0", con);
-                deleteCmd.Parameters.AddWithValue("@id", id);
-                int rowsAffected = deleteCmd.ExecuteNonQuery();
-
-                if (rowsAffected == 0)
-                {
-                    return BadRequest(new { message = "❌ Failed to delete student." });
-                }
-
-                // Step 3: Send rejection email
-                string subject = "❌ Your Student Registration Was Rejected";
-                string body = $@"
-            <p style='font-family:Segoe UI, sans-serif; font-size:14px;'>
-                Dear <strong>{fullName}</strong>,
-            </p>
-            <p>
-                We regret to inform you that your student registration request on our <strong>Learning Management System (LMS)</strong> has been rejected by the admin.
-            </p>
-            <p>
-                If you believe this was a mistake or have questions, feel free to contact our support team.
-            </p>
-            <br/>
-            <p>
-                Best regards,<br/>
-                <strong>RHS Team</strong> 🎓
-            </p>";
-
-                await _emailService.SendEmailAsync(email, subject, body);
-
-                return Ok(new { message = "❌ Pending student deleted and rejection email sent." });
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new
-                {
-                    message = "❌ Error occurred while rejecting student.",
-                    error = ex.Message
-                });
-            }
+            return Ok(new { message = "❌ Rejected & notified." });
         }
 
-
-        // ------------------ 5. View Approved Teachers ------------------
-        [HttpGet("ApprovedTeachers")]
-        [Authorize]
+        [HttpGet("ApprovedTeachers"), Authorize]
         public IActionResult GetApprovedTeachers()
         {
-            List<Teacher> teachers = new();
-            using SqlConnection con = new(_connectionString);
+            using var con = new SqlConnection(_connStr);
+            using var cmd = new SqlCommand("sp_GetApprovedTeachersa", con) { CommandType = CommandType.StoredProcedure };
             con.Open();
-            SqlCommand cmd = new("SELECT * FROM Teacher WHERE IsApproved = 1", con);
-            SqlDataReader reader = cmd.ExecuteReader();
-            while (reader.Read())
-            {
-                teachers.Add(new Teacher
+            var list = new List<Teacher>();
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+                list.Add(new Teacher
                 {
-                    TeacherId = (int)reader["TeacherId"],
-                    FullName = reader["FullName"].ToString(),
-                    Email = reader["Email"].ToString(),
-                    PhoneNumber = reader["PhoneNumber"].ToString()
+                    TeacherId = (int)rdr["TeacherId"],
+                    FullName = rdr["FullName"].ToString(),
+                    Email = rdr["Email"].ToString(),
+                    PhoneNumber = rdr["PhoneNumber"].ToString()
                 });
-            }
-            return Ok(teachers);
+            return Ok(list);
         }
 
-        // ------------------ 6. View Pending Teachers ------------------
-        [HttpGet("PendingTeachers")]
-        [Authorize]
+        [HttpGet("PendingTeachers"), Authorize]
         public IActionResult GetPendingTeachers()
         {
-            List<Teacher> teachers = new();
-            using SqlConnection con = new(_connectionString);
+            using var con = new SqlConnection(_connStr);
+            using var cmd = new SqlCommand("sp_GetPendingTeachers", con) { CommandType = CommandType.StoredProcedure };
             con.Open();
-            SqlCommand cmd = new("SELECT * FROM Teacher WHERE IsApproved = 0", con);
-            SqlDataReader reader = cmd.ExecuteReader();
-            while (reader.Read())
-            {
-                teachers.Add(new Teacher
+            var list = new List<Teacher>();
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+                list.Add(new Teacher
                 {
-                    TeacherId = (int)reader["TeacherId"],
-                    FullName = reader["FullName"].ToString(),
-                    Email = reader["Email"].ToString(),
-                    PhoneNumber = reader["PhoneNumber"].ToString()
+                    TeacherId = (int)rdr["TeacherId"],
+                    FullName = rdr["FullName"].ToString(),
+                    Email = rdr["Email"].ToString(),
+                    PhoneNumber = rdr["PhoneNumber"].ToString()
                 });
-            }
-            return Ok(teachers);
+            return Ok(list);
         }
 
-        // ------------------ 7. Approve Teacher ------------------
-        [HttpPut("ApproveTeacher/{id}")]
-        [Authorize]
+        [HttpPut("ApproveTeacher/{id}"), Authorize]
         public async Task<IActionResult> ApproveTeacher(int id)
         {
-            try
-            {
-                using SqlConnection con = new(_connectionString);
-                con.Open();
+            using var con = new SqlConnection(_connStr);
+            con.Open();
+            using var getCmd = new SqlCommand("SELECT FullName, Email FROM Teacher WHERE TeacherId = @Id", con);
+            getCmd.Parameters.AddWithValue("@Id", id);
+            using var rdr = getCmd.ExecuteReader();
+            if (!rdr.Read())
+                return NotFound(new { message = "❌ Teacher not found." });
+            var fullName = rdr["FullName"].ToString();
+            var email = rdr["Email"].ToString();
+            rdr.Close();
 
-                // First, get the teacher's details
-                SqlCommand getCmd = new("SELECT FullName, Email FROM Teacher WHERE TeacherId = @TeacherId", con);
-                getCmd.Parameters.AddWithValue("@TeacherId", id);
-                SqlDataReader reader = getCmd.ExecuteReader();
+            using var cmd = new SqlCommand("sp_ApproveTeacher", con) { CommandType = CommandType.StoredProcedure };
+            cmd.Parameters.AddWithValue("@Id", id);
+            if ((int)cmd.ExecuteScalar() == 0)
+                return BadRequest(new { message = "❌ Approval failed." });
 
-                if (!reader.Read())
-                {
-                    return NotFound(new { message = "❌ Teacher not found." });
-                }
+            string subject = "✅ Your Teacher Account Has Been Approved!";
+            string body = $"<p>Dear <strong>{fullName}</strong>, your teacher account is now approved.</p>";
+            await _emailService.SendEmailAsync(email, subject, body);
 
-                string fullName = reader["FullName"].ToString();
-                string email = reader["Email"].ToString();
-                reader.Close();
-
-                // Update approval status
-                SqlCommand updateCmd = new("UPDATE Teacher SET IsApproved = 1 WHERE TeacherId = @TeacherId", con);
-                updateCmd.Parameters.AddWithValue("@TeacherId", id);
-
-                int rowsAffected = updateCmd.ExecuteNonQuery();
-
-                if (rowsAffected == 0)
-                {
-                    return BadRequest(new { message = "❌ Failed to approve teacher." });
-                }
-
-                // Send email to teacher
-                string subject = "✅ Your Teacher Account Has Been Approved!";
-                string body = $@"
-            <p style='font-family:Segoe UI, sans-serif; font-size:14px;'>
-                Dear <strong>{fullName}</strong>,
-            </p>
-            <p>
-                Great news! Your account on our <strong>Learning Management System (LMS)</strong> has been approved by the admin. 🎉
-            </p>
-            <p>
-                You can now log in and start managing your courses and students.
-            </p>
-            <p>
-                Welcome aboard!
-            </p>
-            <br/>
-            <p>
-                Best regards,<br/>
-                <strong>RHS Team</strong> 🎓
-            </p>";
-
-                await _emailService.SendEmailAsync(email, subject, body);
-
-                return Ok(new { message = "✅ Teacher approved and email notification sent." });
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new
-                {
-                    message = "❌ Error occurred while approving teacher.",
-                    error = ex.Message
-                });
-            }
+            return Ok(new { message = "✅ Approved & notified." });
         }
 
-
-        [HttpDelete("RejectTeacher/{id}")]
-        [Authorize]
+        [HttpDelete("RejectTeacher/{id}"), Authorize]
         public async Task<IActionResult> RejectTeacher(int id)
         {
-            try
-            {
-                using SqlConnection con = new(_connectionString);
-                con.Open();
+            using var con = new SqlConnection(_connStr);
+            con.Open();
+            using var getCmd = new SqlCommand("SELECT FullName, Email FROM Teacher WHERE TeacherId = @Id AND IsApproved = 0", con);
+            getCmd.Parameters.AddWithValue("@Id", id);
+            using var rdr = getCmd.ExecuteReader();
+            if (!rdr.Read())
+                return NotFound(new { message = "❌ Not found or already approved." });
+            var fullName = rdr["FullName"].ToString();
+            var email = rdr["Email"].ToString();
+            rdr.Close();
 
-                // Step 1: Get teacher details before deleting
-                SqlCommand getCmd = new("SELECT FullName, Email FROM Teacher WHERE TeacherId = @id AND IsApproved = 0", con);
-                getCmd.Parameters.AddWithValue("@id", id);
-                SqlDataReader reader = getCmd.ExecuteReader();
+            using var cmd = new SqlCommand("sp_RejectTeacher", con) { CommandType = CommandType.StoredProcedure };
+            cmd.Parameters.AddWithValue("@Id", id);
+            if ((int)cmd.ExecuteScalar() == 0)
+                return BadRequest(new { message = "❌ Delete failed." });
 
-                if (!reader.Read())
-                {
-                    return NotFound(new { message = "❌ Teacher not found or already approved." });
-                }
+            string subject = "❌ Your Teacher Registration Was Rejected";
+            string body = $"<p>Dear <strong>{fullName}</strong>, we regret to inform you that your registration was rejected.</p>";
+            await _emailService.SendEmailAsync(email, subject, body);
 
-                string fullName = reader["FullName"].ToString();
-                string email = reader["Email"].ToString();
-                reader.Close();
-
-                // Step 2: Delete the teacher
-                SqlCommand deleteCmd = new("DELETE FROM Teacher WHERE TeacherId = @id AND IsApproved = 0", con);
-                deleteCmd.Parameters.AddWithValue("@id", id);
-                int rowsAffected = deleteCmd.ExecuteNonQuery();
-
-                if (rowsAffected == 0)
-                {
-                    return BadRequest(new { message = "❌ Failed to delete teacher." });
-                }
-
-                // Step 3: Send rejection email
-                string subject = "❌ Your Teacher Registration Was Rejected";
-                string body = $@"
-            <p style='font-family:Segoe UI, sans-serif; font-size:14px;'>
-                Dear <strong>{fullName}</strong>,
-            </p>
-            <p>
-                We regret to inform you that your teacher registration request on our <strong>Learning Management System (LMS)</strong> has been rejected by the admin.
-            </p>
-            <p>
-                If you believe this was a mistake or have questions, feel free to contact our support team.
-            </p>
-            <br/>
-            <p>
-                Best regards,<br/>
-                <strong>RHS Team</strong> 🎓
-            </p>";
-
-                await _emailService.SendEmailAsync(email, subject, body);
-
-                return Ok(new { message = "❌ Pending teacher deleted and rejection email sent." });
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new
-                {
-                    message = "❌ Error occurred while rejecting teacher.",
-                    error = ex.Message
-                });
-            }
+            return Ok(new { message = "❌ Rejected & notified." });
         }
 
-
-        // ------------------ 9. Get All Courses ------------------
         [HttpGet("Courses")]
         public IActionResult GetCourses()
         {
-            List<Course> courses = new();
-            using SqlConnection con = new(_connectionString);
+            using var con = new SqlConnection(_connStr);
+            using var cmd = new SqlCommand("sp_GetCourses", con) { CommandType = CommandType.StoredProcedure };
             con.Open();
-            SqlCommand cmd = new("SELECT * FROM Course", con);
-            SqlDataReader reader = cmd.ExecuteReader();
-            while (reader.Read())
-            {
-                courses.Add(new Course
+            var list = new List<Course>();
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+                list.Add(new Course
                 {
-                    CourseId = (int)reader["CourseId"],
-                    CourseName = reader["CourseName"].ToString(),
-                    Description = reader["Description"].ToString(),
-                    Category = reader["Category"].ToString(),
-                    CreatedByTeacherId = (int)reader["CreatedByTeacherId"]
+                    CourseId = (int)rdr["CourseId"],
+                    CourseName = rdr["CourseName"].ToString(),
+                    Description = rdr["Description"].ToString(),
+                    Category = rdr["Category"].ToString(),
+                    CreatedByTeacherId = (int)rdr["CreatedByTeacherId"]
                 });
-            }
-            return Ok(courses);
+            return Ok(list);
         }
 
-        // ------------------ 10. Delete Course ------------------
-
-
-
-        // ------------------ 11. Edit/Update Course ------------------
         [HttpPut("UpdateCourse/{id}")]
         public IActionResult UpdateCourse(int id, [FromBody] Course updatedCourse)
         {
-            using SqlConnection con = new(_connectionString);
-            con.Open();
-            SqlCommand cmd = new("UPDATE Course SET CourseName = @CourseName, Description = @Description, Category = @Category WHERE CourseId = @id", con);
+            using var con = new SqlConnection(_connStr);
+            using var cmd = new SqlCommand("sp_UpdateCoursea", con) { CommandType = CommandType.StoredProcedure };
+            cmd.Parameters.AddWithValue("@Id", id);
             cmd.Parameters.AddWithValue("@CourseName", updatedCourse.CourseName);
             cmd.Parameters.AddWithValue("@Description", updatedCourse.Description);
             cmd.Parameters.AddWithValue("@Category", updatedCourse.Category);
-            cmd.Parameters.AddWithValue("@id", id);
-            int rows = cmd.ExecuteNonQuery();
-            return Ok(new { message = rows > 0 ? "Course Updated Successfully" : "Course Not Found" });
+            con.Open();
+            int affected = (int)cmd.ExecuteScalar();
+            return Ok(new { message = affected > 0 ? "Course Updated Successfully" : "Course Not Found" });
         }
 
         [HttpDelete("DeleteCourse/{id}")]
         public IActionResult DeleteCourse(int id)
         {
-            using SqlConnection con = new(_connectionString);
+            using var con = new SqlConnection(_connStr);
+            using var cmd = new SqlCommand("sp_DeleteCoursea", con) { CommandType = CommandType.StoredProcedure };
+            cmd.Parameters.AddWithValue("@Id", id);
             con.Open();
-            using var transaction = con.BeginTransaction();
-
-            try
-            {
-                // Delete related StudentCourse entries
-                using (SqlCommand deleteRelated = new("DELETE FROM StudentCourse WHERE CourseId = @id", con, transaction))
-                {
-                    deleteRelated.Parameters.AddWithValue("@id", id);
-                    deleteRelated.ExecuteNonQuery();
-                }
-
-                // Delete the Course itself
-                int rows;
-                using (SqlCommand deleteCourse = new("DELETE FROM Course WHERE CourseId = @id", con, transaction))
-                {
-                    deleteCourse.Parameters.AddWithValue("@id", id);
-                    rows = deleteCourse.ExecuteNonQuery();
-                }
-
-                if (rows > 0)
-                {
-                    transaction.Commit();
-                    return Ok(new { message = "Course deleted successfully" });
-                }
-                else
-                {
-                    transaction.Rollback();
-                    return NotFound(new { message = "Course not found" });
-                }
-            }
-            catch (Exception ex)
-            {
-                transaction.Rollback();
-                // Ideally log the exception here
-                return StatusCode(500, new { message = "An error occurred while deleting the course", detail = ex.Message });
-            }
+            int affected = (int)cmd.ExecuteScalar();
+            return affected > 0
+                ? Ok(new { message = "Course deleted successfully" })
+                : NotFound(new { message = "Course not found" });
         }
 
-
-
-        // ------------------ 12. View Student Performance ------------------
         [HttpGet("StudentPerformance")]
         public IActionResult GetPerformanceReports()
         {
-            List<PerformanceReport> reports = new();
-            using SqlConnection con = new(_connectionString);
+            using var con = new SqlConnection(_connStr);
+            using var cmd = new SqlCommand("sp_GetPerformanceReports", con) { CommandType = CommandType.StoredProcedure };
             con.Open();
-            SqlCommand cmd = new("SELECT * FROM PerformanceReport", con);
-            SqlDataReader reader = cmd.ExecuteReader();
-            while (reader.Read())
-            {
-                reports.Add(new PerformanceReport
+            var list = new List<PerformanceReport>();
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+                list.Add(new PerformanceReport
                 {
-                    ReportId = (int)reader["ReportId"],
-                    StudentId = (int)reader["StudentId"],
-                    CourseId = (int)reader["CourseId"],
-                    AverageGrade = Convert.ToDouble(reader["AverageGrade"]),
-                    Remarks = reader["Remarks"].ToString()
+                    ReportId = (int)rdr["ReportId"],
+                    StudentId = (int)rdr["StudentId"],
+                    CourseId = (int)rdr["CourseId"],
+                    AverageGrade = Convert.ToDouble(rdr["AverageGrade"]),
+                    Remarks = rdr["Remarks"].ToString()
                 });
-            }
-            return Ok(reports);
+            return Ok(list);
         }
 
-        // ------------------ 13. Delete Approved Student ------------------
-        [HttpDelete("DeleteApprovedStudent/{id}")]
-        [Authorize]
+        [HttpDelete("DeleteApprovedStudent/{id}"), Authorize]
         public IActionResult DeleteApprovedStudent(int id)
         {
-            try
-            {
-                using SqlConnection con = new SqlConnection(_connectionString);
-                con.Open();
-
-                SqlCommand checkCmd = new SqlCommand("SELECT COUNT(*) FROM Student WHERE StudentId = @id AND IsApproved = 1", con);
-                checkCmd.Parameters.AddWithValue("@id", id);
-                int exists = (int)checkCmd.ExecuteScalar();
-
-                if (exists == 0)
-                    return NotFound(new { message = "Approved Student Not Found" });
-
-                // Attempt to delete student directly
-                SqlCommand deleteCmd = new SqlCommand("DELETE FROM Student WHERE StudentId = @id AND IsApproved = 1", con);
-                deleteCmd.Parameters.AddWithValue("@id", id);
-                deleteCmd.ExecuteNonQuery();
-
-                return Ok(new { message = "Approved Student Deleted Successfully" });
-            }
-            catch (SqlException ex)
-            {
-                // Check for FK constraint violation error number (SQL Server error 547)
-                if (ex.Number == 547)
-                {
-                    return BadRequest(new { message = "Cannot delete student because they are assigned to a course or assignment." });
-                }
-                return StatusCode(500, new { message = "Internal Server Error", detail = ex.Message });
-            }
+            using var con = new SqlConnection(_connStr);
+            using var cmd = new SqlCommand("sp_DeleteApprovedStudent", con) { CommandType = CommandType.StoredProcedure };
+            cmd.Parameters.AddWithValue("@Id", id);
+            con.Open();
+            int affected = (int)cmd.ExecuteScalar();
+            return affected > 0
+                ? Ok(new { message = "Approved Student Deleted Successfully" })
+                : NotFound(new { message = "Approved Student Not Found" });
         }
 
-
-
-        // ------------------ 14. Delete Approved Teacher ------------------
-        [HttpDelete("DeleteApprovedTeacher/{id}")]
-        [Authorize]
+        [HttpDelete("DeleteApprovedTeacher/{id}"), Authorize]
         public IActionResult DeleteApprovedTeacher(int id)
         {
-            try
-            {
-                using SqlConnection con = new(_connectionString);
-                con.Open();
-
-                // Check if teacher exists and approved
-                SqlCommand checkCmd = new("SELECT COUNT(*) FROM Teacher WHERE TeacherId = @id AND IsApproved = 1", con);
-                checkCmd.Parameters.AddWithValue("@id", id);
-                int exists = (int)checkCmd.ExecuteScalar();
-
-                if (exists == 0)
-                {
-                    return NotFound(new { message = "Approved Teacher Not Found" });
-                }
-
-                // Check if teacher assigned to any courses
-                SqlCommand checkCoursesCmd = new SqlCommand("SELECT COUNT(*) FROM Course WHERE TeacherId = @id", con);
-                checkCoursesCmd.Parameters.AddWithValue("@id", id);
-                int assignedCourses = (int)checkCoursesCmd.ExecuteScalar();
-
-                if (assignedCourses > 0)
-                {
-                    return BadRequest(new { message = "Cannot delete teacher: assigned to one or more courses." });
-                }
-
-                // Check if teacher assigned to any assignments (if relevant)
-                SqlCommand checkAssignmentsCmd = new SqlCommand("SELECT COUNT(*) FROM Assignment WHERE TeacherId = @id", con);
-                checkAssignmentsCmd.Parameters.AddWithValue("@id", id);
-                int assignedAssignments = (int)checkAssignmentsCmd.ExecuteScalar();
-
-                if (assignedAssignments > 0)
-                {
-                    return BadRequest(new { message = "Cannot delete teacher: assigned to one or more assignments." });
-                }
-
-                // Delete the teacher
-                SqlCommand deleteCmd = new SqlCommand("DELETE FROM Teacher WHERE TeacherId = @id AND IsApproved = 1", con);
-                deleteCmd.Parameters.AddWithValue("@id", id);
-                deleteCmd.ExecuteNonQuery();
-
-                return Ok(new { message = "Approved Teacher Deleted Successfully" });
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { message = "Cannot delete teacher: assigned to one or more assignments.", detail = ex.Message });
-            }
+            using var con = new SqlConnection(_connStr);
+            using var cmd = new SqlCommand("sp_DeleteApprovedTeacher", con) { CommandType = CommandType.StoredProcedure };
+            cmd.Parameters.AddWithValue("@Id", id);
+            con.Open();
+            int affected = (int)cmd.ExecuteScalar();
+            return affected > 0
+                ? Ok(new { message = "Approved Teacher Deleted Successfully" })
+                : NotFound(new { message = "Approved Teacher Not Found" });
         }
-
-
-
     }
+
 }

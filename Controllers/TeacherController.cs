@@ -221,7 +221,7 @@ namespace Edu_LMS_Greysoft.Controllers
                 using SqlConnection con = new(_connectionString);
                 con.Open();
 
-                SqlCommand cmd = new("sp_AssignCourseToStudent", con);
+                SqlCommand cmd = new("sp_AssignCourseToStudenta", con);
                 cmd.CommandType = CommandType.StoredProcedure;
                 cmd.Parameters.AddWithValue("@StudentId", studentId);
                 cmd.Parameters.AddWithValue("@CourseId", courseId);

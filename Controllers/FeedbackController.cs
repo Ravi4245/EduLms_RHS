@@ -23,8 +23,11 @@ namespace EduLms_RHS.Controllers
                 return BadRequest("Email and Message are required.");
 
             using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new(
-                "INSERT INTO Feedback (Email, Message) VALUES (@Email, @Message)", con);
+            SqlCommand cmd = new("InsertFeedback", con)
+            {
+                CommandType = System.Data.CommandType.StoredProcedure
+            };
+
             cmd.Parameters.AddWithValue("@Email", feedback.Email);
             cmd.Parameters.AddWithValue("@Message", feedback.Message);
 
