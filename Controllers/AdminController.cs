@@ -28,22 +28,6 @@ namespace Edu_LMS_Greysoft.Controllers
             _context = context;
         }
 
-        [HttpGet("ApprovedStudentsCount")]
-        public async Task<IActionResult> GetApprovedStudentsCount()
-        {
-            // Assuming you have a Students table with an "IsApproved" boolean property
-            var count = await _context.Students.CountAsync(s => s.IsApproved == true);
-            return Ok(new { count });
-        }
-
-        // GET: api/Admin/ApprovedTeachersCount
-        [HttpGet("ApprovedTeachersCount")]
-        public async Task<IActionResult> GetApprovedTeachersCount()
-        {
-            // Assuming you have a Teachers table with an "IsApproved" boolean property
-            var count = await _context.Teachers.CountAsync(t => t.IsApproved == true);
-            return Ok(new { count });
-        }
 
         // ------------------ 1. View Pending Students ------------------
         [HttpGet("PendingStudents")]
