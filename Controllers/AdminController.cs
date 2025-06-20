@@ -299,6 +299,120 @@ namespace Edu_LMS_Greysoft.Controllers
                 ? Ok(new { message = "Approved Teacher Deleted Successfully" })
                 : NotFound(new { message = "Approved Teacher Not Found" });
         }
+
+
+
+
+
+        [HttpPut("UpdateStudent/{id}"), Authorize]
+        public IActionResult UpdateStudent(int id, [FromBody] Student updatedStudent)
+        {
+            using var con = new SqlConnection(_connStr);
+            con.Open();
+
+            using var cmd = new SqlCommand("UpdateStudent", con);
+            cmd.CommandType = CommandType.StoredProcedure;
+
+            cmd.Parameters.AddWithValue("@StudentId", id);
+            cmd.Parameters.AddWithValue("@FullName", updatedStudent.FullName);
+            cmd.Parameters.AddWithValue("@Email", updatedStudent.Email);
+            cmd.Parameters.AddWithValue("@PhoneNumber", (object)updatedStudent.PhoneNumber ?? DBNull.Value);
+
+            // Use ExecuteScalar since the SP returns SELECT @@ROWCOUNT
+            int rowsAffected = (int)(cmd.ExecuteScalar() ?? 0);
+
+            if (rowsAffected > 0)
+                return Ok(new { message = "✅ Student updated successfully." });
+            else
+                return NotFound(new { message = "❌ Student not found or not approved." });
+        }
+
+
+
+        [HttpPut("UpdateTeacher/{id}"), Authorize]
+        public IActionResult UpdateTeacher(int id, [FromBody] Teacher updatedTeacher)
+        {
+            using var con = new SqlConnection(_connStr);
+            con.Open();
+
+            using var cmd = new SqlCommand("UpdateTeacher", con);
+            cmd.CommandType = CommandType.StoredProcedure;
+
+            cmd.Parameters.AddWithValue("@TeacherId", id);
+            cmd.Parameters.AddWithValue("@FullName", updatedTeacher.FullName);
+            cmd.Parameters.AddWithValue("@Email", updatedTeacher.Email);
+            cmd.Parameters.AddWithValue("@PhoneNumber", (object)updatedTeacher.PhoneNumber ?? DBNull.Value);
+
+            // Use ExecuteScalar since the SP returns SELECT @@ROWCOUNT
+            int rowsAffected = (int)(cmd.ExecuteScalar() ?? 0);
+
+            if (rowsAffected > 0)
+                return Ok(new { message = "✅ Teacher updated successfully." });
+            else
+                return NotFound(new { message = "❌ Teacher not found or not approved." });
+        }
+
+
+
+
+
+
+
+        // ✅ Check if a student can be deleted
+        [HttpGet("CanDeleteStudent/{id}"), Authorize]
+        public IActionResult CanDeleteStudent(int id)
+        {
+            using var con = new SqlConnection(_connStr);
+            con.Open();
+
+            var cmd = new SqlCommand(@"
+        SELECT CASE 
+            WHEN EXISTS (SELECT 1 FROM StudentCourse WHERE StudentId = @Id)
+              OR EXISTS (SELECT 1 FROM AssignmentSubmission WHERE StudentId = @Id)
+            THEN 0 ELSE 1 END", con);
+
+            cmd.Parameters.AddWithValue("@Id", id);
+            int canDelete = (int)cmd.ExecuteScalar();
+            return Ok(new { canDelete = canDelete == 1 });
+        }
+
+        // ✅ Check if a teacher can be deleted
+        [HttpGet("CanDeleteTeacher/{id}"), Authorize]
+        public IActionResult CanDeleteTeacher(int id)
+        {
+            using var con = new SqlConnection(_connStr);
+            con.Open();
+
+            var cmd = new SqlCommand(@"
+        SELECT CASE 
+            WHEN EXISTS (SELECT 1 FROM Course WHERE CreatedByTeacherId = @Id)
+            THEN 0 ELSE 1 END", con);
+
+            cmd.Parameters.AddWithValue("@Id", id);
+            int canDelete = (int)cmd.ExecuteScalar();
+            return Ok(new { canDelete = canDelete == 1 });
+        }
+
+        // ✅ Check if a course can be deleted
+        [HttpGet("CanDeleteCourse/{id}"), Authorize]
+        public IActionResult CanDeleteCourse(int id)
+        {
+            using var con = new SqlConnection(_connStr);
+            con.Open();
+
+            var cmd = new SqlCommand(@"
+        SELECT CASE 
+            WHEN EXISTS (SELECT 1 FROM StudentCourse WHERE CourseId = @Id)
+              OR EXISTS (SELECT 1 FROM Assignment WHERE CourseId = @Id)
+            THEN 0 ELSE 1 END", con);
+
+            cmd.Parameters.AddWithValue("@Id", id);
+            int canDelete = (int)cmd.ExecuteScalar();
+            return Ok(new { canDelete = canDelete == 1 });
+        }
+
+
+
     }
 
 }

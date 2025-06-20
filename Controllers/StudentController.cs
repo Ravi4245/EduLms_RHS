@@ -143,21 +143,17 @@ public class StudentController : ControllerBase
             return Ok(new { message = "Enrolled successfully." });
         }
 
+
     [HttpGet("MyAssignments/{studentId}")]
     public IActionResult GetMyAssignments(int studentId)
     {
         using SqlConnection con = new(_connectionString);
-        SqlCommand cmd = new(@"
-        SELECT a.AssignmentId, a.Title, a.Description, a.UploadFilePath, a.DueDate
-        FROM Assignment a
-        INNER JOIN AssignmentStudent sa ON sa.AssignmentId = a.AssignmentId
-        WHERE sa.StudentId = @sid
-        AND NOT EXISTS (
-            SELECT 1 FROM AssignmentSubmission sub
-            WHERE sub.AssignmentId = a.AssignmentId AND sub.StudentId = @sid
-        )", con);
-
+        SqlCommand cmd = new("GetMyAssignmentsByStudentId", con)
+        {
+            CommandType = CommandType.StoredProcedure
+        };
         cmd.Parameters.AddWithValue("@sid", studentId);
+
         con.Open();
 
         using SqlDataReader reader = cmd.ExecuteReader();
@@ -177,17 +173,18 @@ public class StudentController : ControllerBase
         return Ok(assignments);
     }
 
+
+
     [HttpGet("MyCourses/{studentId}")]
     public IActionResult GetMyCourses(int studentId)
     {
-        using SqlConnection con = new SqlConnection(_connectionString);
-        SqlCommand cmd = new SqlCommand(@"
-        SELECT c.CourseId, c.CourseName, c.Description, c.Category, c.PdfFilePath
-        FROM Course c
-        INNER JOIN StudentCourse sc ON sc.CourseId = c.CourseId
-        WHERE sc.StudentId = @sid", con);
-
+        using SqlConnection con = new(_connectionString);
+        SqlCommand cmd = new("GetMyCoursesByStudentId", con)
+        {
+            CommandType = CommandType.StoredProcedure
+        };
         cmd.Parameters.AddWithValue("@sid", studentId);
+
         con.Open();
 
         List<object> courses = new();
@@ -206,6 +203,7 @@ public class StudentController : ControllerBase
 
         return Ok(courses);
     }
+
 
 
 
