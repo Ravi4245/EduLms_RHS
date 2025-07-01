@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace EduLms_RHS.Models;
 
-public partial class Teacher
+public partial class Teacher 
 {
     public int TeacherId { get; set; }
 

@@ -4,6 +4,7 @@ using EduLms_RHS.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
 using System.Data;
 
 namespace Edu_LMS_Greysoft.Controllers
@@ -12,12 +13,14 @@ namespace Edu_LMS_Greysoft.Controllers
     [Route("api/[controller]")]
     public class TeacherController : ControllerBase
     {
+        private EduLmsGreysoftContext _Context { get; set; }
         private readonly IConfiguration _configuration;
         private readonly EmailService _emailService;
         private readonly string _connectionString;
 
-        public TeacherController(IConfiguration configuration, EmailService emailService)
+        public TeacherController(IConfiguration configuration, EduLmsGreysoftContext context, EmailService emailService)
         {
+            _Context = context;
             _configuration = configuration;
             _emailService = emailService;
             _connectionString = _configuration.GetConnectionString("Lms");
@@ -36,7 +39,7 @@ namespace Edu_LMS_Greysoft.Controllers
 
                 cmd.Parameters.AddWithValue("@FullName", teacher.FullName);
                 cmd.Parameters.AddWithValue("@Email", teacher.Email);
-                cmd.Parameters.AddWithValue("@Password", teacher.Password); // ⚠️ Use hashing!
+                cmd.Parameters.AddWithValue("@Password", teacher.Password); 
                 cmd.Parameters.AddWithValue("@PhoneNumber", teacher.PhoneNumber);
                 cmd.Parameters.AddWithValue("@Qualification", teacher.Qualification);
                 cmd.Parameters.AddWithValue("@ExperienceYears", teacher.ExperienceYears);
@@ -198,7 +201,7 @@ namespace Edu_LMS_Greysoft.Controllers
         {
             using SqlConnection con = new(_connectionString);
             SqlCommand cmd = new("sp_UpdateCourse", con);
-            cmd.CommandType = CommandType.StoredProcedure;
+            cmd.CommandType = CommandType.StoredProcedure;   
             cmd.Parameters.AddWithValue("@CourseId", course.CourseId);
             cmd.Parameters.AddWithValue("@CreatedByTeacherId", course.CreatedByTeacherId);
             cmd.Parameters.AddWithValue("@CourseName", course.CourseName);
@@ -257,18 +260,47 @@ namespace Edu_LMS_Greysoft.Controllers
 
 
 
+
         [HttpDelete("DeleteCourse/{courseId}/{teacherId}")]
         public IActionResult DeleteCourse(int courseId, int teacherId)
         {
-            using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new("sp_DeleteCourse", con);
-            cmd.CommandType = CommandType.StoredProcedure;
-            cmd.Parameters.AddWithValue("@CourseId", courseId);
-            cmd.Parameters.AddWithValue("@TeacherId", teacherId);
-            con.Open();
-            int rows = cmd.ExecuteNonQuery();
-            return Ok(new { message = rows > 0 ? "Course Deleted" : "Course Not Found or Unauthorized" });
+            try
+            {
+                using SqlConnection con = new(_connectionString);
+                con.Open();
+
+                // ✅ Check if course is assigned to any students
+                SqlCommand checkCmd = new SqlCommand(@"
+            SELECT COUNT(*) 
+            FROM StudentCourse 
+            WHERE CourseId = @CourseId", con); // 👉 Replace 'StudentCourse' with your actual table name if different
+                checkCmd.Parameters.AddWithValue("@CourseId", courseId);
+                int assignedCount = (int)checkCmd.ExecuteScalar();
+
+                if (assignedCount > 0)
+                {
+                    // ❌ Course is assigned to students — return error
+                    return BadRequest(new { message = "❌ Course cannot be deleted. It's assigned to one or more students." });
+                }
+
+                // ✅ Course not assigned — delete it
+                SqlCommand deleteCmd = new SqlCommand("sp_DeleteCourse", con);
+                deleteCmd.CommandType = CommandType.StoredProcedure;
+                deleteCmd.Parameters.AddWithValue("@CourseId", courseId);
+                deleteCmd.Parameters.AddWithValue("@TeacherId", teacherId);
+                int rows = deleteCmd.ExecuteNonQuery();
+
+                return Ok(new { message = rows > 0 ? "✅ Course deleted successfully." : "❌ Course not found or unauthorized." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "❌ Server error", error = ex.Message });
+            }
         }
+
+
+
+
 
 
         [HttpPost("CreateAssignment")]
@@ -292,7 +324,7 @@ namespace Edu_LMS_Greysoft.Controllers
             }
 
             using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new("sp_CreateAssignment", con); // 👈 use stored procedure here
+            SqlCommand cmd = new("sp_CreateAssignment", con);
             cmd.CommandType = CommandType.StoredProcedure;
             cmd.Parameters.AddWithValue("@CourseId", assignment.CourseId);
             cmd.Parameters.AddWithValue("@TeacherId", assignment.TeacherId);
@@ -382,30 +414,42 @@ namespace Edu_LMS_Greysoft.Controllers
 
 
 
-        [HttpDelete("DeleteAssignment/{id}")]
-        public IActionResult DeleteAssignment(int id)
+        [HttpDelete("DeleteAssignment/{assignmentId}/{teacherId}")]
+        public IActionResult DeleteAssignment(int assignmentId, int teacherId)
         {
             try
             {
                 using SqlConnection con = new(_connectionString);
                 con.Open();
 
-                using SqlCommand cmd = new("sp_DeleteAssignment", con); // 💡 SP used here
-                cmd.CommandType = CommandType.StoredProcedure;
-                cmd.Parameters.AddWithValue("@AssignmentId", id);
+                // Check if assignment assigned to any students
+                SqlCommand checkCmd = new SqlCommand(@"
+            SELECT COUNT(*) 
+            FROM StudentAssignments 
+            WHERE AssignmentId = @AssignmentId", con);
+                checkCmd.Parameters.AddWithValue("@AssignmentId", assignmentId);
+                int assignedCount = (int)checkCmd.ExecuteScalar();
 
-                int rowsAffected = cmd.ExecuteNonQuery();
+                if (assignedCount > 0)
+                {
+                    return BadRequest(new { message = "❌ Assignment cannot be deleted. It's assigned to one or more students." });
+                }
 
-                if (rowsAffected > 0)
-                    return Ok(new { message = "Assignment deleted successfully" });
-                else
-                    return NotFound(new { message = "Assignment not found" });
+                // Delete assignment using stored procedure or direct delete
+                SqlCommand deleteCmd = new SqlCommand("sp_DeleteAssignment", con);
+                deleteCmd.CommandType = CommandType.StoredProcedure;
+                deleteCmd.Parameters.AddWithValue("@AssignmentId", assignmentId);
+                deleteCmd.Parameters.AddWithValue("@TeacherId", teacherId);
+                int rows = deleteCmd.ExecuteNonQuery();
+
+                return Ok(new { message = rows > 0 ? "✅ Assignment deleted successfully." : "❌ Assignment not found or unauthorized." });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = "Error deleting assignment", detail = ex.Message });
+                return StatusCode(500, new { message = "❌ Assignment cannot be deleted. It's assigned to one or more students.", error = ex.Message });
             }
         }
+
 
 
 
@@ -543,7 +587,7 @@ namespace Edu_LMS_Greysoft.Controllers
 
 
         [HttpGet("StudentAssignments/{studentId}")]
-        public IActionResult GetStudentAssignments(int studentId)
+        public IActionResult GetStudentAssignments(int studentId)  
         {
             List<object> assignments = new();
             using SqlConnection con = new(_connectionString);
@@ -644,6 +688,31 @@ namespace Edu_LMS_Greysoft.Controllers
                 return BadRequest(new { message = "❌ Student or Assignment not found.", detail = ex.Message });
             }
         }
+
+        [HttpDelete("DeletePerformance/{id}")]
+        public IActionResult DeletePerformance(int id)
+        {
+            try
+            {
+                var report = _Context.PerformanceReports.FirstOrDefault(r => r.ReportId == id); // 👈 Replace 'Id' with actual key
+
+                if (report == null)
+                    return NotFound(new { message = "Performance report not found." });
+
+                _Context.PerformanceReports.Remove(report);
+                _Context.SaveChanges();
+
+                return Ok(new { message = "Performance report deleted successfully." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Server error", error = ex.Message });
+            }
+        }
+
+
+
+
 
 
     }

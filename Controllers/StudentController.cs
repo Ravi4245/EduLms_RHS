@@ -130,18 +130,39 @@ public class StudentController : ControllerBase
             return Ok(courses);
         }
 
-        [HttpPost("Enroll")]
-        public IActionResult EnrollCourse(int studentId, int courseId)
+
+
+
+    [HttpPost("Enroll")]
+    public IActionResult EnrollCourse(int studentId, int courseId)
+    {
+        using SqlConnection con = new(_connectionString);
+        con.Open();
+
+        try
         {
-            using SqlConnection con = new(_connectionString);
-            SqlCommand cmd = new("sp_EnrollCourse", con);
+            SqlCommand cmd = new SqlCommand("sp_EnrollCourse", con);
             cmd.CommandType = CommandType.StoredProcedure;
             cmd.Parameters.AddWithValue("@StudentId", studentId);
             cmd.Parameters.AddWithValue("@CourseId", courseId);
-            con.Open();
+
             cmd.ExecuteNonQuery();
-            return Ok(new { message = "Enrolled successfully." });
+
+            return Ok(new { message = "✅ Enrolled successfully." });
         }
+        catch (SqlException ex)
+        {
+            if (ex.Message.Contains("already enrolled"))
+            {
+                return BadRequest(new { message = "⚠️ You already enrolled in this course." });
+            }
+            return StatusCode(500, new { message = "❌ Enrollment failed.", error = ex.Message });
+        }
+    }
+
+
+
+
 
 
     [HttpGet("MyAssignments/{studentId}")]
@@ -203,6 +224,41 @@ public class StudentController : ControllerBase
 
         return Ok(courses);
     }
+
+
+
+    [HttpGet("AllCourses")]
+    public IActionResult GetAllCourses()
+    {
+        try
+        {
+            using SqlConnection con = new(_connectionString);
+            SqlCommand cmd = new("SELECT CourseId, CourseName, Category FROM Course", con);
+            con.Open();
+
+            List<object> courses = new();
+            using SqlDataReader reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                courses.Add(new
+                {
+                    CourseId = reader["CourseId"],
+                    CourseName = reader["CourseName"],
+                    Category = reader["Category"]
+                });
+            }
+
+            return Ok(courses);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("🔥 GetAllCourses Error: " + ex.Message);
+            return StatusCode(500, new { message = "Server error", error = ex.Message });
+        }
+    }
+
+
+
 
 
 

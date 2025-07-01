@@ -20,7 +20,7 @@ public class LoginController : ControllerBase
         _connectionString = _configuration.GetConnectionString("Lms");
     }
 
-    // ✅ Only Admin uses JWT
+   
     private string GenerateJwtToken(string role, int id, string name)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]));
@@ -49,92 +49,75 @@ public class LoginController : ControllerBase
         using SqlConnection con = new(_connectionString);
         con.Open();
 
-        // ---------- Admin Login with JWT ----------
-        var adminQuery = "SELECT AdminId, FullName FROM Admin WHERE Email = @Email AND Password = @Password";
-        using (SqlCommand cmd = new(adminQuery, con))
-        {
-            cmd.Parameters.AddWithValue("@Email", loginDto.Email);
-            cmd.Parameters.AddWithValue("@Password", loginDto.Password);
+        using SqlCommand cmd = new("sp_LoginUser", con);
+        cmd.CommandType = System.Data.CommandType.StoredProcedure;
+        cmd.Parameters.AddWithValue("@Email", loginDto.Email);
+        cmd.Parameters.AddWithValue("@Password", loginDto.Password);
 
-            using SqlDataReader reader = cmd.ExecuteReader();
-            if (reader.Read())
+        using SqlDataReader reader = cmd.ExecuteReader();
+
+        // 1. Admin
+        if (reader.Read())
+        {
+            var id = (int)reader["Id"];
+            var name = reader["FullName"].ToString();
+            var token = GenerateJwtToken("Admin", id, name);
+
+            return Ok(new
             {
-                var id = (int)reader["AdminId"];
+                Role = "Admin",
+                Id = id,
+                Name = name,
+                Token = token,
+                Message = "✅ Login successful as Admin"
+            });
+        }
+
+        // 2. Teacher
+        if (reader.NextResult() && reader.Read())
+        {
+            if ((bool)reader["IsApproved"])
+            {
+                var id = (int)reader["Id"];
                 var name = reader["FullName"].ToString();
-                var token = GenerateJwtToken("Admin", id, name);
 
                 return Ok(new
                 {
-                    Role = "Admin",
+                    Role = "Teacher",
                     Id = id,
                     Name = name,
-                    Token = token,
-                    Message = "Login successful as Admin"
+                    Message = "✅ Login successful as Teacher"
                 });
             }
-        }
-
-        // ---------- Teacher Login (no JWT) ----------
-        var teacherQuery = "SELECT TeacherId, FullName, IsApproved FROM Teacher WHERE Email = @Email AND Password = @Password";
-        using (SqlCommand cmd = new(teacherQuery, con))
-        {
-            cmd.Parameters.AddWithValue("@Email", loginDto.Email);
-            cmd.Parameters.AddWithValue("@Password", loginDto.Password);
-
-            using SqlDataReader reader = cmd.ExecuteReader();
-            if (reader.Read())
+            else
             {
-                if ((bool)reader["IsApproved"])
-                {
-                    var id = (int)reader["TeacherId"];
-                    var name = reader["FullName"].ToString();
-
-                    return Ok(new
-                    {
-                        Role = "Teacher",
-                        Id = id,
-                        Name = name,
-                        Message = "Login successful as Teacher"
-                    });
-                }
-                else
-                {
-                    return Unauthorized(new { message = "Teacher not approved by admin." });
-
-                }
+                return Unauthorized(new { message = "Teacher not approved by admin." });
             }
         }
 
-        // ---------- Student Login (no JWT) ----------
-        var studentQuery = "SELECT StudentId, FullName, IsApproved FROM Student WHERE Email = @Email AND Password = @Password";
-        using (SqlCommand cmd = new(studentQuery, con))
+        // 3. Student
+        if (reader.NextResult() && reader.Read())
         {
-            cmd.Parameters.AddWithValue("@Email", loginDto.Email);
-            cmd.Parameters.AddWithValue("@Password", loginDto.Password);
-
-            using SqlDataReader reader = cmd.ExecuteReader();
-            if (reader.Read())
+            if ((bool)reader["IsApproved"])
             {
-                if ((bool)reader["IsApproved"])
-                {
-                    var id = (int)reader["StudentId"];
-                    var name = reader["FullName"].ToString();
+                var id = (int)reader["Id"];
+                var name = reader["FullName"].ToString();
 
-                    return Ok(new
-                    {
-                        Role = "Student",
-                        Id = id,
-                        Name = name,
-                        Message = "Login successful as Student"
-                    });
-                }
-                else
+                return Ok(new
                 {
-                    return Unauthorized(new { message = "Student not approved by admin." });
-                }
+                    Role = "Student",
+                    Id = id,
+                    Name = name,
+                    Message = "✅ Login successful as Student"
+                });
+            }
+            else
+            {
+                return Unauthorized(new { message = "Student not approved by admin." });
             }
         }
 
         return Unauthorized(new { message = "Invalid email or password." });
     }
+
 }

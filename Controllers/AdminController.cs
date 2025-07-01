@@ -1,5 +1,4 @@
 ﻿
-
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
@@ -48,7 +47,8 @@ namespace Edu_LMS_Greysoft.Controllers
         public IActionResult GetApprovedStudents()
         {
             using var con = new SqlConnection(_connStr);
-            using var cmd = new SqlCommand("sp_GetApprovedStudentsa", con) { CommandType = CommandType.StoredProcedure };
+            using var cmd = new SqlCommand("sp_GetApprovedStudentsa", con)
+            { CommandType = CommandType.StoredProcedure };
             con.Open();
             var list = new List<Student>();
             using var rdr = cmd.ExecuteReader();
@@ -84,11 +84,12 @@ namespace Edu_LMS_Greysoft.Controllers
                 return BadRequest(new { message = "❌ Approval failed." });
 
             string subject = "✅ Your Student Account Has Been Approved!";
-            string body = $"<p>Dear <strong>{fullName}</strong>, your student account is now approved.</p>";
+            string body = $"<p>Dear <strong>{fullName}</strong>, your student account is now approved you can login with your EmailId and Password.</p>";
             await _emailService.SendEmailAsync(email, subject, body);
 
-            return Ok(new { message = "✅ Approved & notified." });
+            return Ok(new { message = "✅ Approved & notified via mail." });
         }
+
 
         [HttpDelete("RejectStudent/{id}"), Authorize]
         public async Task<IActionResult> RejectStudent(int id)
@@ -117,6 +118,7 @@ namespace Edu_LMS_Greysoft.Controllers
             return Ok(new { message = "❌ Rejected & notified." });
         }
 
+
         [HttpGet("ApprovedTeachers"), Authorize]
         public IActionResult GetApprovedTeachers()
         {
@@ -136,6 +138,7 @@ namespace Edu_LMS_Greysoft.Controllers
             return Ok(list);
         }
 
+
         [HttpGet("PendingTeachers"), Authorize]
         public IActionResult GetPendingTeachers()
         {
@@ -154,6 +157,7 @@ namespace Edu_LMS_Greysoft.Controllers
                 });
             return Ok(list);
         }
+
 
         [HttpPut("ApproveTeacher/{id}"), Authorize]
         public async Task<IActionResult> ApproveTeacher(int id)
@@ -175,11 +179,12 @@ namespace Edu_LMS_Greysoft.Controllers
                 return BadRequest(new { message = "❌ Approval failed." });
 
             string subject = "✅ Your Teacher Account Has Been Approved!";
-            string body = $"<p>Dear <strong>{fullName}</strong>, your teacher account is now approved.</p>";
+            string body = $"<p>Dear <strong>{fullName}</strong>, your teacher account is now approved you can login with your EmailId and Passwor .</p>";
             await _emailService.SendEmailAsync(email, subject, body);
 
             return Ok(new { message = "✅ Approved & notified." });
         }
+
 
         [HttpDelete("RejectTeacher/{id}"), Authorize]
         public async Task<IActionResult> RejectTeacher(int id)
@@ -207,6 +212,7 @@ namespace Edu_LMS_Greysoft.Controllers
             return Ok(new { message = "❌ Rejected & notified." });
         }
 
+
         [HttpGet("Courses")]
         public IActionResult GetCourses()
         {
@@ -227,6 +233,7 @@ namespace Edu_LMS_Greysoft.Controllers
             return Ok(list);
         }
 
+
         [HttpPut("UpdateCourse/{id}")]
         public IActionResult UpdateCourse(int id, [FromBody] Course updatedCourse)
         {
@@ -241,6 +248,7 @@ namespace Edu_LMS_Greysoft.Controllers
             return Ok(new { message = affected > 0 ? "Course Updated Successfully" : "Course Not Found" });
         }
 
+
         [HttpDelete("DeleteCourse/{id}")]
         public IActionResult DeleteCourse(int id)
         {
@@ -253,6 +261,7 @@ namespace Edu_LMS_Greysoft.Controllers
                 ? Ok(new { message = "Course deleted successfully" })
                 : NotFound(new { message = "Course not found" });
         }
+
 
         [HttpGet("StudentPerformance")]
         public IActionResult GetPerformanceReports()
@@ -274,6 +283,7 @@ namespace Edu_LMS_Greysoft.Controllers
             return Ok(list);
         }
 
+
         [HttpDelete("DeleteApprovedStudent/{id}"), Authorize]
         public IActionResult DeleteApprovedStudent(int id)
         {
@@ -286,6 +296,7 @@ namespace Edu_LMS_Greysoft.Controllers
                 ? Ok(new { message = "Approved Student Deleted Successfully" })
                 : NotFound(new { message = "Approved Student Not Found" });
         }
+
 
         [HttpDelete("DeleteApprovedTeacher/{id}"), Authorize]
         public IActionResult DeleteApprovedTeacher(int id)
@@ -318,7 +329,6 @@ namespace Edu_LMS_Greysoft.Controllers
             cmd.Parameters.AddWithValue("@Email", updatedStudent.Email);
             cmd.Parameters.AddWithValue("@PhoneNumber", (object)updatedStudent.PhoneNumber ?? DBNull.Value);
 
-            // Use ExecuteScalar since the SP returns SELECT @@ROWCOUNT
             int rowsAffected = (int)(cmd.ExecuteScalar() ?? 0);
 
             if (rowsAffected > 0)
@@ -358,7 +368,7 @@ namespace Edu_LMS_Greysoft.Controllers
 
 
 
-        // ✅ Check if a student can be deleted
+       
         [HttpGet("CanDeleteStudent/{id}"), Authorize]
         public IActionResult CanDeleteStudent(int id)
         {
@@ -376,7 +386,7 @@ namespace Edu_LMS_Greysoft.Controllers
             return Ok(new { canDelete = canDelete == 1 });
         }
 
-        // ✅ Check if a teacher can be deleted
+       
         [HttpGet("CanDeleteTeacher/{id}"), Authorize]
         public IActionResult CanDeleteTeacher(int id)
         {
@@ -393,7 +403,7 @@ namespace Edu_LMS_Greysoft.Controllers
             return Ok(new { canDelete = canDelete == 1 });
         }
 
-        // ✅ Check if a course can be deleted
+        
         [HttpGet("CanDeleteCourse/{id}"), Authorize]
         public IActionResult CanDeleteCourse(int id)
         {
