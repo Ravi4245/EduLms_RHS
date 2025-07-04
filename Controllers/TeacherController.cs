@@ -165,9 +165,9 @@ namespace Edu_LMS_Greysoft.Controllers
             return Ok(new { message = "Course Created with PDF" });
         }
 
+             
 
-
-
+         
         [HttpGet("MyCourses/{teacherId}")]
         public IActionResult GetCoursesByTeacher(int teacherId)
         {
@@ -181,7 +181,7 @@ namespace Edu_LMS_Greysoft.Controllers
             while (reader.Read())
             {
                 courses.Add(new Course
-                {
+                { 
                     CourseId = (int)reader["CourseId"],
                     CourseName = reader["CourseName"].ToString(),
                     Description = reader["Description"].ToString(),

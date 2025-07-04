@@ -10,7 +10,7 @@ using Microsoft.EntityFrameworkCore;
 namespace Edu_LMS_Greysoft.Controllers
 {
     [ApiController]
-    [Route("api/[controller]")]
+    [Route("api/[controller]")] 
     public class AdminController : ControllerBase
     {
         private readonly IConfiguration _config;
@@ -186,6 +186,7 @@ namespace Edu_LMS_Greysoft.Controllers
         }
 
 
+
         [HttpDelete("RejectTeacher/{id}"), Authorize]
         public async Task<IActionResult> RejectTeacher(int id)
         {
@@ -232,6 +233,7 @@ namespace Edu_LMS_Greysoft.Controllers
                 });
             return Ok(list);
         }
+
 
 
         [HttpPut("UpdateCourse/{id}")]
